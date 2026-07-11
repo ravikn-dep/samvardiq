@@ -266,6 +266,22 @@ If a feature does not contribute to a measurable goal, we do not build it.
 
 ---
 
+## 12. Healthcare First
+
+Samvardiq exists to solve healthcare problems first.
+
+Every product decision, AI Executive, workflow, recommendation and integration must improve the way healthcare organizations grow, operate and deliver patient care.
+
+Although the architecture is intentionally designed to support future industries, Samvardiq will remain exclusively focused on healthcare until it achieves product maturity.
+
+Healthcare is our expertise.
+
+Healthcare is our responsibility.
+
+Healthcare is our mission.
+
+---
+
 # The Samvardiq Executive Board
 
 Samvardiq is not a chatbot.

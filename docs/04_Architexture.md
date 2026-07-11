@@ -150,6 +150,24 @@ Security, privacy and auditability are built into every architectural layer.
 
 ---
 
+## MVP Architecture Principle
+
+The first production release of Samvardiq will prioritize deep integration with a small number of high-value platforms rather than shallow integration with many systems.
+
+The initial architecture is centered around:
+
+- Google Business Profile
+- Google Analytics
+- Google Reviews
+- Gmail
+- WhatsApp Business
+
+These systems provide sufficient operational intelligence to validate the Executive Board model.
+
+Additional healthcare systems such as EMR, Practice Management Systems, Billing, PACS, LIS and HIS will be introduced in future releases without changing the underlying architecture.
+
+---
+
 # SECTION 2
 
 # Samvardiq Operating System (SOSA)

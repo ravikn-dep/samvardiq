@@ -1,90 +1,36 @@
 # SAMVARDIQ
 
-## PRD
+# Product Requirements Document (PRD)
+
+**Document ID:** DOC-003
 
 **Version:** 1.0
 
-**Status:** Draft
+**Status:** Baseline Frozen
 
 **Owner:** Founder Office
 
-**Last Updated:** 10 July 2026
+**Last Updated:** 11 July 2026
+
+---
+
+> This document defines the scope of Samvardiq Version 1 (MVP).
+
+> Changes that materially alter product scope, architecture, integrations, or Executive capabilities should be accompanied by an entry in the Decision Register (`11_Decisions.md`) before implementation.
 
 ---
 
 ## Purpose
 
-[One paragraph explaining why this document exists.]
+The Product Requirements Document (PRD) defines the business objectives, functional scope, success criteria, and implementation priorities for Samvardiq Version 1.
+
+It serves as the primary reference for product design, architecture, engineering, testing, and future product evolution.
 
 ---
 
 ## Guiding Principle
 
-> "[One defining quote for this document.]"
-
----
-
-## Purpose
-
-The Product Requirements Document (PRD) is the single source of truth for Samvardiq's product.
-
-Every capability, workflow, executive, and user experience must be documented and approved here before implementation begins.
-
----
-
-## Guiding Principle
-
-> "Great products solve meaningful problems before they build impressive features."
-
-# Product Requirements Document (PRD)
-
-Version: 0.1
-
-Status: Draft
-
----
-
-# Product Name
-
-Samvardiq
-
----
-
-# Product Tagline
-
-Empowering Every Healthcare Practice to Grow Together.
-
----
-
-# Product Category
-
-Healthcare Growth Operating System
-
-Powered by Artificial Intelligence.
-
----
-
-# Problem Statement
-
-Healthcare professionals spend years mastering medicine but receive very little education about building, managing and growing a healthcare practice.
-
-Today's healthcare practices often rely on multiple disconnected tools and agencies for:
-
-- Google Business Profile
-- Digital Marketing
-- SEO
-- Reviews
-- Website
-- Analytics
-- Finance
-- Operations
-- Patient Communication
-
-These systems rarely communicate with each other.
-
-Healthcare professionals are left making important business decisions using incomplete information.
-
-Samvardiq solves this by becoming the unified Healthcare Growth Operating System.
+> "Every feature must help a healthcare organization make better decisions."
 
 ---
 
@@ -207,6 +153,123 @@ Reduce:
 The first release of Samvardiq will focus on helping healthcare practices understand and improve their Google Business Profile performance.
 
 This module becomes the foundation for all future growth modules.
+
+# Phase 1 MVP Scope
+
+The first production version of Samvardiq will be designed around the digital ecosystem already used by most healthcare practices.
+
+Rather than introducing new operational software, Samvardiq will act as an Executive Intelligence Layer above existing systems.
+
+## Supported Integrations
+
+## Current Integrations (MVP)
+
+- Google Business Profile
+- Google Analytics
+- Google Reviews
+- Gmail
+- WhatsApp Business
+
+---
+
+## Planned Future Integrations
+
+- Google Search Console
+- Meta Business Suite
+- Practice Management Systems
+- EMR/EHR
+- HIS
+- PACS
+- LIS
+- Billing Software
+- Payment Gateways
+- Telemedicine Platforms
+
+These integrations provide sufficient information for the Executive Board to generate meaningful recommendations without requiring major workflow changes.
+
+## Design Partner
+
+The first production version of Samvardiq will be designed, tested, refined and validated in partnership with:
+
+**Dr. Deepthi Orthopaedic Clinic**
+
+The clinic serves as Samvardiq's Design Partner.
+
+Every major feature, recommendation engine, workflow and Executive capability will be evaluated against real operational challenges encountered in the clinic before broader deployment.
+
+Insights gathered from the Design Partner will continuously shape product evolution while maintaining a healthcare-first focus.
+
+## Phase 1 Deliverables
+
+- Executive Daily Briefing
+- Business Health Score
+- Executive Dashboard
+- Goal Tracking
+- Google Business Profile Intelligence
+- Google Reviews Intelligence
+- Website Performance Intelligence
+- Lead & Appointment Monitoring
+- Gmail Intelligence
+- WhatsApp Communication Insights
+- Executive Recommendations
+- Founder Approval Dashboard
+- The initial MVP prioritizes observation and decision support over automation.
+
+## MVP Success Criteria
+
+The MVP will be considered successful if it demonstrates measurable value for the Design Partner.
+
+Success indicators include:
+
+- Improved Google Business Profile performance
+- Increased patient enquiries
+- Faster response to reviews
+- Better visibility into business performance
+- Actionable Executive recommendations
+- Reduced manual analysis effort
+- Positive founder feedback
+- Weekly measurable business improvements
+
+The objective of Version 1 is not complete automation.
+
+The objective is to prove that an AI Executive Board can consistently help healthcare practices make better business decisions.
+
+## Out of Scope (Version 1)
+
+To maintain focus and ensure rapid validation, the following capabilities are intentionally excluded from the first production release of Samvardiq:
+
+### Clinical Systems
+
+- Electronic Medical Records (EMR/EHR)
+- Hospital Information Systems (HIS)
+- PACS integration
+- Laboratory Information Systems (LIS)
+- Radiology Information Systems (RIS)
+
+### Operational Systems
+
+- Billing and invoicing
+- Inventory management
+- Pharmacy management
+- Human Resource Management Systems
+- Payroll
+
+### Automation
+
+- Fully autonomous decision-making
+- Automatic posting without approval
+- Autonomous patient communication
+- Autonomous financial decisions
+
+### Advanced Features
+
+- Multi-clinic benchmarking
+- Franchise management
+- Predictive analytics
+- Clinical decision support
+- Insurance integrations
+
+These capabilities remain part of Samvardiq's long-term vision but are intentionally excluded from Version 1 to maintain a focused, healthcare-first Executive Intelligence MVP.
 
 ---
 

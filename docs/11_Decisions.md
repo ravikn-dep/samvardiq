@@ -631,3 +631,106 @@ Features may evolve.
 Technology may change.
 
 Well-reasoned decisions endure.
+
+---
+
+# BIZ-001
+
+## Title
+
+Healthcare First Strategy
+
+---
+
+## Status
+
+Approved
+
+---
+
+## Decision
+
+Samvardiq will focus exclusively on healthcare organizations.
+
+The architecture will remain extensible for future industries, but no non-healthcare capabilities will be developed until the healthcare platform reaches maturity.
+
+---
+
+## Reasoning
+
+Healthcare is the founding domain of Samvardiq.
+
+Deep healthcare expertise creates stronger products than attempting to build for every industry simultaneously.
+
+---
+
+## Expected Benefits
+
+- Stronger product focus
+- Better customer understanding
+- Faster product-market fit
+- Clear brand identity
+- Higher recommendation quality
+
+---
+
+## Impact
+
+Entire Platform
+
+---
+
+# PROD-002
+
+## Title
+
+Existing Ecosystem First
+
+---
+
+## Status
+
+Approved
+
+---
+
+## Decision
+
+The initial MVP will integrate with software already used by healthcare practices rather than replacing them.
+
+Primary integrations include:
+
+- Google Business Profile
+- Google Analytics
+- Google Reviews
+- Gmail
+- WhatsApp Business
+
+---
+
+## Reasoning
+
+Healthcare practices should receive value immediately without changing their existing workflows.
+
+Samvardiq enhances existing systems rather than replacing them.
+
+---
+
+## Expected Benefits
+
+- Faster onboarding
+- Lower adoption friction
+- Quicker MVP validation
+- Reduced implementation complexity
+
+---
+
+## Impact
+
+Architecture
+
+PRD
+
+Executive Board
+
+Integration Layer
