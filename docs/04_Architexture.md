@@ -1733,6 +1733,7 @@ Executives determine direction.
 
 Domain Experts provide depth.
 
+The Founder makes the final decision.
 
 ---
 
