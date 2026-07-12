@@ -734,3 +734,72 @@ PRD
 Executive Board
 
 Integration Layer
+
+---
+
+## ARCH-004
+
+### Title
+
+Executive Board Communication Standard
+
+### Status
+
+Approved
+
+### Decision
+
+All strategic collaboration between AI Executives shall occur through the Executive Communication Protocol (ECP).
+
+The ECP defines standardized message structures, communication principles, confidence reporting, evidence requirements, disagreement handling, escalation rules, auditability, and executive collaboration workflows.
+
+Every current and future Executive participating in the Executive Board must comply with the Executive Communication Protocol.
+
+### Rationale
+
+A standardized communication protocol enables explainable, auditable, extensible, and consistent Executive collaboration while allowing new Executive roles to be introduced without redesigning the architecture.
+
+### Impact
+
+- Standardizes Executive interactions.
+- Enables extensible Executive Board architecture.
+- Improves explainability and governance.
+- Supports future autonomous and human-assisted Executive collaboration.
+
+---
+
+## ARCH-005
+
+### Title
+
+Domain Expert Framework
+
+### Status
+
+Approved
+
+### Decision
+
+Samvardiq will separate strategic AI Executives from specialized Domain Experts.
+
+AI Executives coordinate strategy and organizational decisions.
+
+Domain Experts perform focused, evidence-based analysis within defined scopes and return their findings to an owning Executive.
+
+All Domain Experts must be registered, governed, auditable, and selected through the Expert Selection Engine.
+
+### Rationale
+
+Separating strategy from specialist analysis improves modularity, explainability, accuracy, governance, and future extensibility.
+
+### Impact
+
+- Executive Board Layer
+- Domain Expert Layer
+- Goal Orchestration
+- Recommendation Engine
+- Knowledge Layer
+- Data and Memory Layer
+
+---
+

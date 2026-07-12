@@ -282,6 +282,20 @@ Healthcare is our mission.
 
 ---
 
+## 13. Execution Principle
+
+Samvardiq values execution over endless analysis.
+
+Discussion exists to unblock progress, not delay it.
+
+Every working session should produce a measurable deliverable that moves the project forward.
+
+Ideas that do not immediately contribute to the current milestone are documented for future consideration rather than interrupting execution.
+
+This principle applies equally to product strategy, architecture, engineering, design, documentation, and business operations.
+
+---
+
 # The Samvardiq Executive Board
 
 Samvardiq is not a chatbot.
