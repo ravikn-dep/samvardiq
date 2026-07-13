@@ -901,3 +901,223 @@ Separating recommendation from authorization preserves trust while enabling AI-a
 
 ---
 
+## ARCH-009
+
+### Title
+
+Controlled Automation Architecture
+
+### Status
+
+Approved
+
+### Decision
+
+All automated actions within Samvardiq shall be executed through the Automation Engine.
+
+The Automation Engine must validate approval, organizational policy, integration permissions, target context, and execution scope before performing any action.
+
+Every automation must be auditable, monitored, failure-aware, and traceable to an organizational goal, recommendation, and approval record.
+
+### Rationale
+
+Healthcare organizations require safe and accountable automation.
+
+A centralized Automation Engine prevents unauthorized execution, enables consistent connector behavior, supports recovery from failure, and preserves human control.
+
+### Impact
+
+- Automation Engine
+- Approval & Governance Layer
+- Recommendation Layer
+- Integration Connectors
+- Data & Memory Layer
+- Learning Layer
+- Audit Architecture
+
+-----
+
+## ARCH-010
+
+### Title
+
+Separate Data, Memory, Learning, and Knowledge Layers
+
+### Status
+
+Approved
+
+### Decision
+
+The Samvardiq Operating System Architecture (SOSA) shall separate Data, Memory, Learning, and Knowledge into four independent architectural layers.
+
+The previous "Data & Memory Layer" is replaced with:
+
+- Layer 8 — Data Layer
+- Layer 9 — Memory Layer
+- Layer 10 — Learning Engine
+- Layer 11 — Knowledge Layer
+
+Each layer has a distinct responsibility and lifecycle.
+
+### Rationale
+
+Data, Memory, Learning, and Knowledge represent fundamentally different concepts.
+
+Separating these concerns improves modularity, implementation clarity, scalability, testing, and future extensibility.
+
+This architecture aligns more closely with how intelligent organizations operate:
+
+- Data records facts.
+- Memory preserves organizational experience.
+- Learning improves future behavior.
+- Knowledge provides trusted reference information.
+
+### Impact
+
+- SOSA Architecture
+- Backend Services
+- Database Design
+- Memory Framework
+- Learning Framework
+- Knowledge Framework
+
+---
+
+## ARCH-011
+
+### Title
+
+Organization-Isolated Data Architecture
+
+### Status
+
+Approved
+
+### Decision
+
+All structured facts, transactions, metrics, integration records, audit events, and configuration data within Samvardiq shall be managed through the Data Layer.
+
+Every record must be linked to an organization and protected through multi-tenant isolation, least-privilege access, validation, lineage, and audit controls.
+
+The Data Layer shall remain separate from Memory, Learning, and Knowledge.
+
+### Rationale
+
+Reliable Executive Intelligence requires accurate, secure, traceable, and organization-specific data.
+
+Separating factual data from organizational memory, learned behavior, and reference knowledge creates clearer responsibilities and a more scalable implementation.
+
+### Impact
+
+- Data Layer
+- Database Design
+- Integration Framework
+- Executive Board
+- Domain Experts
+- Automation Engine
+- Memory Layer
+- Learning Engine
+- Knowledge Layer
+
+---
+
+## ARCH-012
+
+### Title
+
+Persistent Organizational Memory Architecture
+
+### Status
+
+Approved
+
+### Decision
+
+Samvardiq shall maintain a dedicated Memory Layer responsible for preserving organizational experience, Founder preferences, Executive context, historical reasoning, and successful operational patterns.
+
+The Memory Layer shall remain independent from the Data Layer and shall provide contextual intelligence to all Executive reasoning while preserving explainability, version history, and organizational isolation.
+
+### Rationale
+
+Organizations become more effective through accumulated experience rather than raw data alone.
+
+Separating Memory from Data enables personalized Executive Intelligence while maintaining clear architectural boundaries.
+
+### Impact
+
+- Memory Layer
+- Executive Board
+- Domain Experts
+- Recommendation Layer
+- Learning Engine
+- Knowledge Layer
+
+---
+
+## ARCH-013
+
+### Title
+
+Evidence-Based Learning Architecture
+
+### Status
+
+Approved
+
+### Decision
+
+Samvardiq shall maintain a dedicated Learning Engine responsible for continuously improving Executive reasoning, recommendation quality, confidence calibration, and organizational intelligence through validated outcomes.
+
+Learning shall remain explainable, evidence-based, organization-specific, and subject to Founder governance.
+
+The Learning Engine shall never directly modify Knowledge or bypass organizational approval processes.
+
+### Rationale
+
+Organizations improve through measured outcomes rather than assumptions.
+
+Separating Learning from Memory and Knowledge enables continuous improvement while preserving transparency, governance, and explainability.
+
+### Impact
+
+- Learning Engine
+- Memory Layer
+- Executive Board
+- Recommendation Layer
+- Knowledge Layer
+- Founder Governance
+
+---
+
+## ARCH-014
+
+### Title
+
+Trusted Knowledge Architecture
+
+### Status
+
+Approved
+
+### Decision
+
+Samvardiq shall maintain a dedicated Knowledge Layer responsible for managing verified, version-controlled, and governed knowledge used by all Executives and Domain Experts.
+
+Knowledge shall remain independent from Data, Memory, and Learning while providing authoritative references for explainable decision-making.
+
+### Rationale
+
+Separating trusted knowledge from organizational experience and learning improves explainability, governance, version control, and long-term maintainability.
+
+### Impact
+
+- Knowledge Layer
+- Executive Board
+- Domain Experts
+- Learning Engine
+- Governance Framework
+- Explainability System
+
+---
+
