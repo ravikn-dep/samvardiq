@@ -1,0 +1,28 @@
+{
+  "name": "@samvardiq/data-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Data Layer (SOSA Layer 8): organization-scoped reference persistence for Organization -> Goal -> Recommendation -> Approval Request -> Approval Record. In-memory only; no production database.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build:deps": "npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance",
+    "pretypecheck": "npm run build:deps",
+    "typecheck": "tsc -p tsconfig.json",
+    "prebuild": "npm run build:deps",
+    "build": "tsc -p tsconfig.build.json",
+    "pretest": "npm run build:deps",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "lint": "eslint src test"
+  },
+  "devDependencies": {
+    "@samvardiq/approval-governance": "file:../approval-governance",
+    "@samvardiq/marketing-intelligence": "file:../marketing-intelligence",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.15.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}
