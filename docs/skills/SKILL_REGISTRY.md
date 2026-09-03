@@ -265,3 +265,47 @@ IMPLEMENTED_VALIDATED
 
 Not CANONICAL_STABLE until reviewed and merged into protected `main`
 per repository governance.
+
+Correction (CMO-W1 Session 2): the Session 1 report described
+`docs/04_Architecture.md` as covering "all 7 SOSA layers." The
+canonical file itself was never 7-layer — it documents all 11 SOSA
+layers in full (Organization Intelligence, Executive Board, Domain
+Expert, Goal Orchestration, Recommendation, Approval & Governance,
+Automation Engine, Data, Memory, Learning, Knowledge; see ARCH-010).
+Only that summary sentence was wrong. No architecture file and no
+source code in either package encoded a 7-layer assumption.
+
+---
+
+## CMO-W1 Session 2 — Implementation Record (SOSA Layer 6)
+
+Implemented:
+Approval & Governance Layer boundary — Recommendation -> Approval
+Request -> Human Decision -> Approval Record -> STOP — at
+`packages/approval-governance/`.
+
+This layer is domain-agnostic (not CMO-specific): it accepts any
+Recommendation Layer output that structurally satisfies
+`RecommendationRef` (recommendationId, organizationId, goalId,
+approvalRequirement, risk, title). `src/` has no dependency on
+`@samvardiq/marketing-intelligence`; that package is wired in only as
+a `file:../marketing-intelligence` devDependency of the test suite, to
+prove the real Session 1 `Recommendation` shape flows through
+unmodified in `test/vertical-slice.test.ts`.
+
+No executor, HTTP client, connector, job queue, or GBP/GA4/WhatsApp/
+Gmail/CMS/advertising call exists anywhere in this package. No
+production database was introduced — persistence is an in-memory
+`ApprovalRepository`/`ApproverDirectory` behind interfaces, so a
+future Data Layer implementation can replace them without changing
+governance behavior.
+
+Validation: typecheck, lint, unit tests (10/10), and production build
+all pass locally. Combined with Session 1: 17/17 tests passing across
+both packages.
+
+Status:
+IMPLEMENTED_VALIDATED
+
+Not CANONICAL_STABLE until reviewed and merged into protected `main`
+per repository governance.

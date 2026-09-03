@@ -1,18 +1,20 @@
 {
-  "name": "@samvardiq/marketing-intelligence",
+  "name": "@samvardiq/approval-governance",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "CMO Executive -> Marketing Skill Router -> Domain Expert vertical slice (SOSA Layers 2-5, marketing domain).",
+  "description": "Approval & Governance Layer (SOSA Layer 6): Recommendation -> Approval Request -> Human Decision -> Approval Record. No automation/execution.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
+    "pretest": "npm run build --prefix ../marketing-intelligence",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "lint": "eslint src test"
   },
   "devDependencies": {
+    "@samvardiq/marketing-intelligence": "file:../marketing-intelligence",
     "@types/node": "^22.10.0",
     "eslint": "^9.15.0",
     "tsx": "^4.19.2",
