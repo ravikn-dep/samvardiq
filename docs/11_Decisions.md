@@ -12,7 +12,7 @@
 
 **Created:** 10 July 2026
 
-**Last Updated:** 10 July 2026
+**Last Updated:** 03 September 2026
 
 ---
 
@@ -58,6 +58,7 @@ Future founders, engineers, designers, AI Executives, and contributors should be
 | AI-001 | Goal-Oriented Executive Intelligence | Approved |
 | PROD-001 | Human-in-Control Decision Framework | Approved |
 | ARCH-003 | Architecture Before Code | Approved |
+| ARCH-015 | Transactional Persistence Architecture (PostgreSQL / Supabase / Drizzle) | Approved |
 
 ---
 
@@ -1118,6 +1119,127 @@ Separating trusted knowledge from organizational experience and learning improve
 - Learning Engine
 - Governance Framework
 - Explainability System
+
+---
+
+## ARCH-015
+
+### Title
+
+Transactional Persistence Architecture (PostgreSQL / Supabase / Drizzle)
+
+### Date
+
+03 September 2026
+
+### Status
+
+Approved (with amendments — see Reasoning)
+
+### Category
+
+Architecture
+
+### Decision
+
+Samvardiq adopts PostgreSQL as its transactional database engine,
+Supabase as the initial managed PostgreSQL hosting platform, and
+Drizzle as the TypeScript schema/data-access layer.
+
+Organization isolation uses defense-in-depth: application-level
+organization-scoped repository contracts (already established in
+`packages/data-foundation/`) **plus** PostgreSQL Row Level Security.
+Neither alone is sufficient.
+
+Approval/governance transactions must use database transactions where
+atomicity is required — specifically, the `ApprovalRequest` terminal
+status update and its corresponding `ApprovalRecord` insert must be
+wrapped in a single database transaction. Approval audit records
+require database-level immutability controls in addition to the
+application-level protections already built (no update/delete method
+exists on the repository interface); DATA-W3 must validate the exact
+mechanism against the actual runtime database role the application
+connects as, not just against a generic role.
+
+The primary-key strategy is **not** frozen. `packages/data-foundation/`'s
+existing `${organizationId}::${id}` composite-key pattern is one
+candidate, not a pre-selected design: DATA-W3 must compare it against
+globally unique entity IDs + `organization_id` + composite uniqueness
+/ organization-aware foreign keys, and select whichever is the
+simplest design that preserves structural organization isolation and
+referential integrity.
+
+Supabase is infrastructure, not an architectural dependency. Samvardiq
+persistence must remain portable to standard PostgreSQL — no
+Supabase-proprietary feature may become load-bearing for the system's
+correctness or organization-isolation guarantees.
+
+### Reasoning
+
+This decision formally approves `docs/decisions/ADR-DATA-001.md`
+(DATA-W2), with nine numbered amendments from the Founder Office (full
+text preserved in that document's "Approval & Amendments" section) that
+narrow the original proposal to explicit principles rather than locked
+implementation details:
+
+- The exact primary-key strategy and the exact database-immutability
+  mechanism are **not** locked by this decision — DATA-W3 must
+  validate (and may select between named alternatives for) both before
+  any production migration is finalized.
+- Supabase's role is explicitly scoped to hosting. The portability
+  requirement (vanilla PostgreSQL underneath, no proprietary extension
+  dependency) that made Supabase an acceptable choice in ADR-DATA-001
+  is elevated here from a risk-mitigation note to a binding
+  constraint: nothing in later implementation may make the system's
+  correctness depend on a Supabase-specific feature.
+- PostgreSQL was selected over MySQL primarily because MySQL has no
+  native Row Level Security, which conflicts directly with the
+  defense-in-depth organization-isolation requirement in
+  `docs/04_Architecture.md` Layer 8. Drizzle was selected over Prisma
+  primarily for RLS-friendly transaction ergonomics and its closer fit
+  to this codebase's existing thin-adapter repository style. Full
+  candidate comparison and weighted decision matrix are preserved in
+  ADR-DATA-001 and are not repeated here.
+
+### Risks
+
+- An incorrect RLS policy can create false confidence if treated as
+  the only isolation layer — mitigated by keeping the application-scoped
+  repository contracts as a second, independent layer, not a
+  transitional one to be removed later.
+- Vendor dependency on Supabase for hosting — mitigated by the binding
+  portability constraint above and by treating hosting as a decision
+  independent of the engine/ORM choice.
+- A database-immutability mechanism validated against the wrong
+  runtime role would give false audit-integrity assurance — mitigated
+  by amendment 7 requiring validation against the actual connecting
+  role, not a generic one.
+
+### Impact
+
+- Data Layer
+- `packages/data-foundation/`
+- `packages/approval-governance/` (one small additive interface method
+  for atomic decision recording, to be implemented in a future session,
+  not by this decision)
+- Approval & Governance Layer
+- Future Memory/Learning/Knowledge Layer persistence (engine choice
+  only — no scope claimed over those layers by this decision)
+
+### Source
+
+`docs/decisions/ADR-DATA-001.md` (DATA-W2) — see that document for the
+full candidate comparison, weighted decision matrix, conceptual schema,
+nine numbered amendments, and deferred decisions this entry does not
+repeat.
+
+### Review Date
+
+Before production migrations are finalized (DATA-W3).
+
+### Owner
+
+Founder Office
 
 ---
 
