@@ -23,7 +23,7 @@ import {
  * and Governance layers are the real Session 1/2 packages (file: devDependencies),
  * not simulated objects.
  */
-test('J: full vertical slice — Organization -> Goal -> CMO -> Recommendation -> Approval -> persistence', () => {
+test('J: full vertical slice — Organization -> Goal -> CMO -> Recommendation -> Approval -> persistence', async () => {
   const organizations = new InMemoryOrganizationRepository();
   const goals = new InMemoryGoalRepository(organizations);
   const recommendations = new InMemoryRecommendationRepository(goals);
@@ -32,13 +32,13 @@ test('J: full vertical slice — Organization -> Goal -> CMO -> Recommendation -
   directory.register({ id: 'founder-ravi', organizationId: 'org-dr-deepthi', role: 'founder', kind: 'human' });
   const governance = new ApprovalGovernance(approvals, directory);
 
-  const organization = organizations.create({
+  const organization = await organizations.create({
     organizationId: 'org-dr-deepthi',
     organizationType: 'orthopaedic_clinic',
     name: 'Dr. Deepthi Orthopaedic Clinic',
   });
 
-  const goal = goals.create({
+  const goal = await goals.create({
     goalId: 'goal-gbp-appointments',
     organizationId: organization.organizationId,
     title: 'Increase appointments originating from Google Business Profile',
@@ -64,11 +64,11 @@ test('J: full vertical slice — Organization -> Goal -> CMO -> Recommendation -
   assert.equal(outcome.status, 'ok');
   const recommendation = outcome.recommendations[0]!;
 
-  const persistedRecommendation = recommendations.save(toPersistedRecommendation(recommendation));
+  const persistedRecommendation = await recommendations.save(toPersistedRecommendation(recommendation));
   assert.equal(persistedRecommendation.organizationId, organization.organizationId);
   assert.equal(persistedRecommendation.goalId, goal.goalId);
 
-  const request = governance.submitApprovalRequest({
+  const request = await governance.submitApprovalRequest({
     organizationId: organization.organizationId,
     goalId: goal.goalId,
     recommendationId: persistedRecommendation.recommendationId,
@@ -76,9 +76,9 @@ test('J: full vertical slice — Organization -> Goal -> CMO -> Recommendation -
     recommendation,
   });
   assert.equal(request.status, 'PENDING');
-  assert.equal(approvals.getRequest(request.approvalRequestId)?.approvalRequestId, request.approvalRequestId);
+  assert.equal((await approvals.getRequest(organization.organizationId, request.approvalRequestId))?.approvalRequestId, request.approvalRequestId);
 
-  const record = governance.decide(request.approvalRequestId, {
+  const record = await governance.decide(request.approvalRequestId, {
     decision: 'APPROVED',
     approverId: 'founder-ravi',
     organizationId: organization.organizationId,
@@ -86,11 +86,11 @@ test('J: full vertical slice — Organization -> Goal -> CMO -> Recommendation -
   assert.equal(record.decision, 'APPROVED');
 
   // Retrieve the complete organization-scoped governance chain.
-  const chainOrg = organizations.get(organization.organizationId);
-  const chainGoal = goals.get(organization.organizationId, goal.goalId);
-  const chainRecommendation = recommendations.get(organization.organizationId, persistedRecommendation.recommendationId);
-  const chainRequest = approvals.getRequest(request.approvalRequestId);
-  const [chainRecord] = approvals.listRecords(request.approvalRequestId);
+  const chainOrg = await organizations.get(organization.organizationId);
+  const chainGoal = await goals.get(organization.organizationId, goal.goalId);
+  const chainRecommendation = await recommendations.get(organization.organizationId, persistedRecommendation.recommendationId);
+  const chainRequest = await approvals.getRequest(organization.organizationId, request.approvalRequestId);
+  const [chainRecord] = await approvals.listRecords(organization.organizationId, request.approvalRequestId);
 
   assert.ok(chainOrg && chainGoal && chainRecommendation && chainRequest && chainRecord);
   assert.equal(chainGoal.organizationId, chainOrg.organizationId);

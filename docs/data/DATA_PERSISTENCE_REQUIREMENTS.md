@@ -2,9 +2,11 @@
 
 ## Data Persistence Requirements (Layer 8)
 
-**Version:** 0.1 (draft input to DATA-W2)
+**Version:** 0.2 (several requirements now implementation-validated by DATA-W3)
 
-**Status:** Draft — requirements only, no technology selected
+**Status:** Active — technology selected (ADR-DATA-001/ARCH-015); several
+requirements below now carry a DATA-W3 validation note. Sections without
+such a note remain open, exactly as originally drafted.
 
 **Owner:** Founder Office
 
@@ -39,6 +41,17 @@ enforce the same thing structurally (e.g. row-level security, a
 mandatory tenant column in every unique index), not just by convention
 in query-writing code.
 
+> **DATA-W3 validation:** implemented and tested against real PostgreSQL
+> as dual-layer defense-in-depth — Row Level Security (`FORCE ROW LEVEL
+> SECURITY`, policies on all 5 tables) plus the unchanged org-scoped
+> repository signatures. Tested against the actual non-superuser runtime
+> role (`samvardiq_app`), not just the table owner: cross-organization
+> reads return zero rows, cross-organization writes fail closed
+> (`insufficient_privilege`), and missing session context — including an
+> explicit WHERE-clause spoofing attempt — exposes and permits nothing.
+> See `packages/data-foundation/test/integration/postgres.test.ts`
+> scenarios G–J.
+
 ### Relational integrity
 
 `Goal.organizationId` → `Organization`; `Recommendation.organizationId
@@ -50,6 +63,16 @@ application code. A production database should be able to enforce the
 core chain (foreign keys, or an equivalent constraint mechanism)
 rather than relying solely on application checks.
 
+> **DATA-W3 validation:** implemented with composite foreign keys
+> (`(organization_id, entity_id)` → `(organization_id, entity_id)`)
+> throughout — see "Key strategy" in the ADR-DATA-001 implementation
+> note. The one relationship a plain FK cannot express —
+> `ApprovalRequest.goalId` must equal *its own* recommendation's
+> `goalId`, not just any valid goal — is enforced by a
+> `BEFORE INSERT OR UPDATE` trigger. All four integrity failure modes
+> (bad organization, bad goal, bad recommendation, bad approval request)
+> are proven against real Postgres in `postgres.test.ts` scenarios C–F.
+
 ### Transactions
 
 Creating an `ApprovalRecord` and updating its `ApprovalRequest.status`
@@ -57,6 +80,19 @@ must be atomic — a future implementation must not be able to observe a
 request stuck `PENDING` after its terminal record was already written,
 or vice versa. Any physical implementation needs a transaction or
 equivalent atomic-write guarantee around that pair.
+
+> **DATA-W3 validation:** implemented as a single Postgres transaction
+> in `PostgresApprovalRepository.recordDecision` — the terminal `UPDATE
+> ... WHERE status = 'PENDING'` and the `ApprovalRecord INSERT` commit
+> or roll back together. The `WHERE status = 'PENDING'` clause doubles
+> as an optimistic compare-and-swap: two concurrent decisions on the
+> same request produce exactly one success and one deterministic
+> `ApprovalRequestConcurrencyError`, with no application-level lock
+> involved — proven under real concurrent load in scenario M, and an
+> induced mid-transaction failure proven to roll back both writes in
+> scenario L. This required one small, additive method on
+> `ApprovalRepository` (`recordDecision`), documented in ADR-DATA-001's
+> implementation note.
 
 ### Append-only audit history
 
@@ -66,6 +102,19 @@ interface. A physical database should reinforce this independently of
 application code (e.g. no UPDATE/DELETE grants on the audit table for
 the application role, or an append-only storage engine/table design).
 
+> **DATA-W3 validation:** implemented as two independent layers, both
+> proven against real Postgres. Layer 1 (now): the application role
+> (`samvardiq_app`) is granted `SELECT, INSERT` only on
+> `approval_records` — no `UPDATE`/`DELETE` grant exists, so any attempt
+> fails with `insufficient_privilege` (scenarios N/O, app-role variant).
+> Layer 2 (the enterprise posture ADR-DATA-001 named as "later," included
+> now because it was cheap): a `BEFORE UPDATE OR DELETE` trigger
+> unconditionally raises an exception — proven to block even the
+> migration-owner/superuser role, which the GRANT layer alone cannot
+> touch (scenarios N/O, owner-role variant). See ADR-DATA-001's
+> implementation note for why both layers were implemented rather than
+> just one.
+
 ### Indexing requirements
 
 Every organization-scoped lookup used today needs an efficient
@@ -74,6 +123,18 @@ recommendationId)` on Recommendation, `approvalRequestId` on
 ApprovalRecord (for `listRecords`), and `(organizationId, approverId)`
 on the approver directory. `listByOrganization` / `listByGoal` imply
 `organizationId`-prefixed indexes, not full scans.
+
+> **DATA-W3 validation:** implemented. Composite primary keys already
+> provide the `(organization_id, entity_id)`-prefixed index every
+> `get()` needs; explicit secondary indexes were added for
+> `(organization_id, goal_id)` on `recommendations`,
+> `(organization_id, recommendation_id)` and `(organization_id, status)`
+> on `approval_requests`, and a `UNIQUE(organization_id,
+> approval_request_id)` on `approval_records` (a hardening beyond what
+> was originally required — it makes "at most one terminal record per
+> request" database-enforced, not just governance-enforced). The
+> approver-directory index remains open — `ApproverDirectory` stays
+> in-memory (Layer 6's concern, not Layer 8's).
 
 ### Deterministic IDs
 
@@ -85,6 +146,12 @@ preserve both properties: ID collisions must be rejected, not
 auto-resolved by overwrite, and IDs must remain stable/reproducible
 identifiers rather than storage-assigned surrogate keys the
 application doesn't control.
+
+> **DATA-W3 validation:** implemented. All primary keys are
+> caller-supplied `text` columns (no serial/identity columns anywhere);
+> duplicate inserts raise a `unique_violation` (SQLSTATE `23505`),
+> mapped to the same `DuplicateEntityError` the in-memory repositories
+> already used — proven not to silently overwrite in scenario P.
 
 ### Timestamps
 
@@ -191,6 +258,12 @@ types without evaluating it explicitly in DATA-W2.
 
 ## Status
 
-Draft. Input to **DATA-W2 — Physical Database Architecture & Technology
-Decision**. Not itself an architectural decision — no entry in
-`docs/11_Decisions.md` is created by this document.
+Active. Technology selected and several requirements above
+implementation-validated by **DATA-W3 — PostgreSQL/Drizzle Persistence
+Implementation & RLS Foundation** (see the `DATA-W3 validation` notes
+inline). Sections without such a note — migrations-as-a-recurring-process,
+backup/recovery, encryption, access control (auth), broader auditability,
+healthcare classification, retention/deletion, and analytics — remain
+open. This document itself still creates no entry in
+`docs/11_Decisions.md`; see `docs/decisions/ADR-DATA-001.md` (recorded
+as `ARCH-015`) for the actual architectural decision.

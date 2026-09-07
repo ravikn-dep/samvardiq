@@ -6,7 +6,6 @@ import {
   InsufficientAuthorityError,
   InvalidApprovalStateTransitionError,
   MissingRationaleError,
-  OrganizationMismatchError,
   RecommendationIntegrityError,
   UnknownApproverError,
 } from './errors.js';
@@ -48,7 +47,7 @@ export class ApprovalGovernance {
     private readonly approverDirectory: ApproverDirectory,
   ) {}
 
-  submitApprovalRequest(input: SubmitApprovalRequestInput): ApprovalRequest {
+  async submitApprovalRequest(input: SubmitApprovalRequestInput): Promise<ApprovalRequest> {
     const { recommendation } = input;
     if (
       recommendation.organizationId !== input.organizationId ||
@@ -74,21 +73,35 @@ export class ApprovalGovernance {
       createdAt: new Date().toISOString(),
       expiresAt: input.expiresAt,
     };
-    this.repository.saveRequest(request);
+    await this.repository.saveRequest(request);
     return request;
   }
 
-  getRequest(approvalRequestId: string): ApprovalRequest | undefined {
-    return this.repository.getRequest(approvalRequestId);
+  async getRequest(organizationId: string, approvalRequestId: string): Promise<ApprovalRequest | undefined> {
+    return this.repository.getRequest(organizationId, approvalRequestId);
   }
 
-  listRecords(approvalRequestId: string): ApprovalRecord[] {
-    return this.repository.listRecords(approvalRequestId);
+  async listRecords(organizationId: string, approvalRequestId: string): Promise<ApprovalRecord[]> {
+    return this.repository.listRecords(organizationId, approvalRequestId);
   }
 
-  /** Human decision on a PENDING request. Never triggers execution — returns an audit record only. */
-  decide(approvalRequestId: string, input: ApprovalDecisionInput): ApprovalRecord {
-    const request = this.repository.getRequest(approvalRequestId);
+  /**
+   * Human decision on a PENDING request. Never triggers execution — returns an audit record only.
+   *
+   * DATA-W3: the request lookup is scoped to input.organizationId — a
+   * request that exists but belongs to a different organization is
+   * indistinguishable from one that doesn't exist at all (both produce
+   * ApprovalRequestNotFoundError). This mirrors exactly what Row Level
+   * Security does at the Postgres layer: a cross-organization row is
+   * invisible, not merely "rejected" with a message that would leak its
+   * existence. This subsumes the separate organizationId-mismatch and
+   * approver-organization-mismatch checks this method used to make
+   * explicitly (both are now structurally guaranteed by the org-scoped
+   * getRequest/approverDirectory.find lookups themselves, so they were
+   * removed as unreachable rather than left as dead code).
+   */
+  async decide(approvalRequestId: string, input: ApprovalDecisionInput): Promise<ApprovalRecord> {
+    const request = await this.repository.getRequest(input.organizationId, approvalRequestId);
     if (!request) throw new ApprovalRequestNotFoundError(approvalRequestId);
 
     if (request.status !== 'PENDING') {
@@ -96,20 +109,12 @@ export class ApprovalGovernance {
     }
 
     if (this.isExpired(request)) {
-      this.transitionAway(request, 'EXPIRED', { actorId: 'system', actorRole: 'system', rationale: 'Approval window elapsed.' });
+      await this.transitionAway(request, 'EXPIRED', { actorId: 'system', actorRole: 'system', rationale: 'Approval window elapsed.' });
       throw new ApprovalRequestExpiredError(approvalRequestId);
-    }
-
-    if (input.organizationId !== request.organizationId) {
-      throw new OrganizationMismatchError(input.organizationId, request.organizationId);
     }
 
     const approver = this.approverDirectory.find(input.organizationId, input.approverId);
     if (!approver) throw new UnknownApproverError(input.approverId);
-
-    if (approver.organizationId !== request.organizationId) {
-      throw new OrganizationMismatchError(approver.organizationId, request.organizationId);
-    }
 
     if (approver.kind === 'ai') {
       throw new AiSelfApprovalError(input.approverId);
@@ -131,13 +136,13 @@ export class ApprovalGovernance {
     });
   }
 
-  /** Withdrawal of a still-pending request. Not a decision — no approver authority check. */
-  cancelApprovalRequest(approvalRequestId: string, input: CancelApprovalRequestInput): ApprovalRecord {
-    const request = this.repository.getRequest(approvalRequestId);
+  /**
+   * Withdrawal of a still-pending request. Not a decision — no approver authority check.
+   * Same organization-scoped lookup as decide() — see its doc comment.
+   */
+  async cancelApprovalRequest(approvalRequestId: string, input: CancelApprovalRequestInput): Promise<ApprovalRecord> {
+    const request = await this.repository.getRequest(input.organizationId, approvalRequestId);
     if (!request) throw new ApprovalRequestNotFoundError(approvalRequestId);
-    if (input.organizationId !== request.organizationId) {
-      throw new OrganizationMismatchError(input.organizationId, request.organizationId);
-    }
     if (request.status !== 'PENDING') {
       throw new InvalidApprovalStateTransitionError(request.status, 'CANCELLED');
     }
@@ -153,11 +158,11 @@ export class ApprovalGovernance {
   }
 
   /** The only place an ApprovalRecord is created — always frozen, always appended, never updated. */
-  private transitionAway(
+  private async transitionAway(
     request: ApprovalRequest,
     decision: ApprovalDecisionType,
     actor: { actorId: string; actorRole: ActorRole; rationale?: string },
-  ): ApprovalRecord {
+  ): Promise<ApprovalRecord> {
     const decidedAt = new Date().toISOString();
     const previousState = request.status;
     const resultingState = decision;
@@ -179,8 +184,10 @@ export class ApprovalGovernance {
       resultingState,
     });
 
-    this.repository.updateRequestStatus(request.approvalRequestId, resultingState, decidedAt);
-    this.repository.appendRecord(record);
+    // One atomic operation, not two sequential calls: a Postgres-backed
+    // repository wraps both writes in a single DB transaction (DATA-W3) —
+    // see packages/data-foundation/src/postgres/approvalRepository.ts.
+    await this.repository.recordDecision({ ...request, status: resultingState, decidedAt }, record);
     return record;
   }
 }

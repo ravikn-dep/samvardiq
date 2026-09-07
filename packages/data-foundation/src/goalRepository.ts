@@ -11,11 +11,14 @@ export interface CreateGoalInput {
   ownerExecutive?: string;
 }
 
-/** Every lookup is organization-scoped by construction — there is no getGoal(goalId) overload to bypass it. */
+/**
+ * Every lookup is organization-scoped by construction — there is no getGoal(goalId) overload to bypass it.
+ * Async (DATA-W3): a Postgres-backed implementation is inherently network-bound.
+ */
 export interface GoalRepository {
-  create(input: CreateGoalInput): Goal;
-  get(organizationId: string, goalId: string): Goal | undefined;
-  listByOrganization(organizationId: string): Goal[];
+  create(input: CreateGoalInput): Promise<Goal>;
+  get(organizationId: string, goalId: string): Promise<Goal | undefined>;
+  listByOrganization(organizationId: string): Promise<Goal[]>;
 }
 
 export class InMemoryGoalRepository implements GoalRepository {
@@ -27,8 +30,8 @@ export class InMemoryGoalRepository implements GoalRepository {
     return `${organizationId}::${goalId}`;
   }
 
-  create(input: CreateGoalInput): Goal {
-    if (!this.organizations.get(input.organizationId)) {
+  async create(input: CreateGoalInput): Promise<Goal> {
+    if (!(await this.organizations.get(input.organizationId))) {
       throw new OrganizationNotFoundError(input.organizationId);
     }
     const key = this.key(input.organizationId, input.goalId);
@@ -50,12 +53,12 @@ export class InMemoryGoalRepository implements GoalRepository {
     return { ...goal };
   }
 
-  get(organizationId: string, goalId: string): Goal | undefined {
+  async get(organizationId: string, goalId: string): Promise<Goal | undefined> {
     const goal = this.goals.get(this.key(organizationId, goalId));
     return goal ? { ...goal } : undefined;
   }
 
-  listByOrganization(organizationId: string): Goal[] {
+  async listByOrganization(organizationId: string): Promise<Goal[]> {
     return [...this.goals.values()].filter((goal) => goal.organizationId === organizationId).map((goal) => ({ ...goal }));
   }
 }

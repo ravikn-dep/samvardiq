@@ -18,7 +18,7 @@ import { InMemoryApprovalRepository } from '../src/repository.js';
  * and it does so only to prove the real Recommendation shape flows through
  * unmodified — src/ never imports it, since Layer 6 is domain-agnostic.
  */
-test('vertical slice: Goal -> CMO -> Router -> Expert -> Recommendation -> Approval Request -> Decision -> Record -> STOP', () => {
+test('vertical slice: Goal -> CMO -> Router -> Expert -> Recommendation -> Approval Request -> Decision -> Record -> STOP', async () => {
   const cmo = new CMOExecutive(createMarketingSkillRegistry());
   const outcome = cmo.evaluateGoal({
     organizationId: 'org-dr-deepthi',
@@ -45,7 +45,7 @@ test('vertical slice: Goal -> CMO -> Router -> Expert -> Recommendation -> Appro
   directory.register({ id: 'founder-ravi', organizationId: 'org-dr-deepthi', role: 'founder', kind: 'human' });
   const governance = new ApprovalGovernance(new InMemoryApprovalRepository(), directory);
 
-  const request = governance.submitApprovalRequest({
+  const request = await governance.submitApprovalRequest({
     organizationId: recommendation.organizationId,
     goalId: recommendation.goalId,
     recommendationId: recommendation.recommendationId,
@@ -55,7 +55,7 @@ test('vertical slice: Goal -> CMO -> Router -> Expert -> Recommendation -> Appro
   assert.equal(request.status, 'PENDING');
   assert.equal(request.requiredApprovalLevel, recommendation.approvalRequirement);
 
-  const record = governance.decide(request.approvalRequestId, {
+  const record = await governance.decide(request.approvalRequestId, {
     decision: 'APPROVED',
     approverId: 'founder-ravi',
     organizationId: 'org-dr-deepthi',

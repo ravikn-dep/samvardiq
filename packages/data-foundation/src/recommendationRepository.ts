@@ -2,11 +2,11 @@ import { DuplicateEntityError, GoalNotFoundError } from './errors.js';
 import type { GoalRepository } from './goalRepository.js';
 import type { PersistedRecommendation } from './types.js';
 
-/** Organization-scoped by construction, same as GoalRepository. */
+/** Organization-scoped by construction, same as GoalRepository. Async (DATA-W3). */
 export interface RecommendationRepository {
-  save(record: PersistedRecommendation): PersistedRecommendation;
-  get(organizationId: string, recommendationId: string): PersistedRecommendation | undefined;
-  listByGoal(organizationId: string, goalId: string): PersistedRecommendation[];
+  save(record: PersistedRecommendation): Promise<PersistedRecommendation>;
+  get(organizationId: string, recommendationId: string): Promise<PersistedRecommendation | undefined>;
+  listByGoal(organizationId: string, goalId: string): Promise<PersistedRecommendation[]>;
 }
 
 export class InMemoryRecommendationRepository implements RecommendationRepository {
@@ -18,11 +18,11 @@ export class InMemoryRecommendationRepository implements RecommendationRepositor
     return `${organizationId}::${recommendationId}`;
   }
 
-  save(record: PersistedRecommendation): PersistedRecommendation {
+  async save(record: PersistedRecommendation): Promise<PersistedRecommendation> {
     // goals.get() is itself organization-scoped, so a goal belonging to a
     // different organization can never be "found" here — this is what makes
     // a cross-organization save fail closed, not a separate check.
-    if (!this.goals.get(record.organizationId, record.goalId)) {
+    if (!(await this.goals.get(record.organizationId, record.goalId))) {
       throw new GoalNotFoundError(record.organizationId, record.goalId);
     }
     const key = this.key(record.organizationId, record.recommendationId);
@@ -33,12 +33,12 @@ export class InMemoryRecommendationRepository implements RecommendationRepositor
     return { ...record };
   }
 
-  get(organizationId: string, recommendationId: string): PersistedRecommendation | undefined {
+  async get(organizationId: string, recommendationId: string): Promise<PersistedRecommendation | undefined> {
     const recommendation = this.recommendations.get(this.key(organizationId, recommendationId));
     return recommendation ? { ...recommendation } : undefined;
   }
 
-  listByGoal(organizationId: string, goalId: string): PersistedRecommendation[] {
+  async listByGoal(organizationId: string, goalId: string): Promise<PersistedRecommendation[]> {
     return [...this.recommendations.values()]
       .filter((r) => r.organizationId === organizationId && r.goalId === goalId)
       .map((r) => ({ ...r }));

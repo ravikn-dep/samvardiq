@@ -627,3 +627,81 @@ strategy (amendment 8 leaves this open) or the exact database-immutability
 mechanism (amendment 7 leaves this open) sketched in "Conceptual Schema"
 and "Append-Only Audit" below — those remain open for DATA-W3 to validate before any
 production migration is written.
+
+---
+
+## Implementation Note (DATA-W3) — Amendments 7 & 8 Resolved
+
+This section records how DATA-W3 resolved the two carve-outs above. It
+is an additive implementation record, not a revision of the approved
+decision above — nothing in "Approval & Amendments," "Proposed
+Decision," "Conceptual Schema," or "Append-Only Audit" was rewritten.
+
+### Amendment 8 — key strategy: composite primary keys, chosen over globally-unique IDs
+
+Both options were implemented conceptually and compared directly
+against `packages/data-foundation`'s existing, already-tested behavior
+before choosing:
+
+1. **DATA-W1's own in-memory repositories already test** (`persistence.test.ts`
+   scenario H) that the same entity id string may validly exist under
+   two different organizations simultaneously — organization-scoped
+   uniqueness, not global uniqueness, by design. A globally-unique-ID
+   primary key would silently change that already-shipped, already-tested
+   behavior; a composite `(organization_id, entity_id)` key preserves it
+   exactly, with no adapter-level behavior change.
+2. A composite primary key makes **every foreign key to it automatically
+   organization-scoped** — there is no "wrong, simpler" FK a future
+   migration could accidentally write (unlike a global-ID design, where
+   a FK to the bare global PK instead of a composite unique constraint
+   would silently reopen the cross-organization hole this whole session
+   exists to close).
+3. A composite PK needs **one index per table**, not a PK index plus a
+   separate tenant-uniqueness index.
+
+Implemented in `packages/data-foundation/src/postgres/schema.ts` — see
+the file's own header comment for the same reasoning inline with the
+code it governs. All five tables use `(organization_id, entity_id)`
+composite primary keys and composite foreign keys.
+
+### Amendment 7 — immutability mechanism, validated against the actual runtime role
+
+Two layers, both implemented and both proven against the actual
+non-superuser role the application connects as (`samvardiq_app`), not
+just the migration-owner role:
+
+1. **Grant revocation (the "now" layer):** `samvardiq_app` is granted
+   `SELECT, INSERT` only on `approval_records` — no `UPDATE`/`DELETE`.
+   Proven: an `UPDATE`/`DELETE` attempt as `samvardiq_app` fails with
+   SQLSTATE `42501` (`insufficient_privilege`).
+2. **Trigger (the "later/enterprise" layer, included now because it was
+   cheap):** a `BEFORE UPDATE OR DELETE` trigger unconditionally raises
+   an exception. Proven: this fires even for the migration-owner
+   role — which grant revocation alone cannot touch, since ownership
+   confers privileges regardless of grants.
+
+Both mechanisms are exercised as distinct test scenarios (`N`/`O`, each
+with an app-role and an owner-role variant) in
+`packages/data-foundation/test/integration/postgres.test.ts`, precisely
+so the difference between "restricted by grant" and "blocked
+regardless of role" is independently visible rather than assumed.
+
+### Consequence: one additive interface change beyond what this ADR anticipated
+
+Implementing real transactional atomicity (the "Approval Atomicity"
+section above) required one additive method on approval-governance's
+`ApprovalRepository` interface — `recordDecision(request, record)` —
+replacing two separate `updateRequestStatus`/`appendRecord` calls with
+one atomic operation. This was anticipated in principle by this ADR's
+"Approval Atomicity" section but is recorded here as done. Session-2's
+public interfaces were also hardened to be organization-scoped
+(`getRequest`/`updateRequestStatus`/`listRecords` now take
+`organizationId`), a change Row Level Security made structurally
+necessary (Postgres must know the tenant context before it can query at
+all) — full reasoning is in `packages/approval-governance/src/repository.ts`
+and `governance.ts`. Both changes are additive and every existing test
+was updated, not weakened.
+
+**Status of this implementation note:** IMPLEMENTED_VALIDATED — proven
+against real PostgreSQL (not a substitute engine), including
+concurrency and rollback behavior, not merely typechecked.

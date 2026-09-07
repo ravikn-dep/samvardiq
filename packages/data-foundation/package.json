@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Data Layer (SOSA Layer 8): organization-scoped reference persistence for Organization -> Goal -> Recommendation -> Approval Request -> Approval Record. In-memory only; no production database.",
+  "description": "Data Layer (SOSA Layer 8): organization-scoped reference persistence for Organization -> Goal -> Recommendation -> Approval Request -> Approval Record. In-memory reference adapters plus a PostgreSQL/Drizzle physical adapter (DATA-W3). Supabase-portable, no proprietary APIs.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
@@ -13,14 +13,21 @@
     "prebuild": "npm run build:deps",
     "build": "tsc -p tsconfig.build.json",
     "pretest": "npm run build:deps",
-    "test": "node --import tsx --test \"test/**/*.test.ts\"",
-    "lint": "eslint src test"
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test",
+    "db:generate": "drizzle-kit generate"
   },
   "devDependencies": {
     "@samvardiq/approval-governance": "file:../approval-governance",
     "@samvardiq/marketing-intelligence": "file:../marketing-intelligence",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.15.0",
+    "pg": "^8.13.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.16.0"

@@ -9,15 +9,16 @@ export interface CreateOrganizationInput {
   status?: OrganizationStatus;
 }
 
+/** Async (DATA-W3): a Postgres-backed implementation is inherently network-bound. */
 export interface OrganizationRepository {
-  create(input: CreateOrganizationInput): Organization;
-  get(organizationId: string): Organization | undefined;
+  create(input: CreateOrganizationInput): Promise<Organization>;
+  get(organizationId: string): Promise<Organization | undefined>;
 }
 
 export class InMemoryOrganizationRepository implements OrganizationRepository {
   private readonly organizations = new Map<string, Organization>();
 
-  create(input: CreateOrganizationInput): Organization {
+  async create(input: CreateOrganizationInput): Promise<Organization> {
     if (this.organizations.has(input.organizationId)) {
       throw new DuplicateEntityError('Organization', input.organizationId);
     }
@@ -34,7 +35,7 @@ export class InMemoryOrganizationRepository implements OrganizationRepository {
     return { ...organization };
   }
 
-  get(organizationId: string): Organization | undefined {
+  async get(organizationId: string): Promise<Organization | undefined> {
     const organization = this.organizations.get(organizationId);
     return organization ? { ...organization } : undefined;
   }

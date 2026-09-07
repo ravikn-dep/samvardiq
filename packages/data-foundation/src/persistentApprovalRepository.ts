@@ -22,13 +22,13 @@ export class PersistentApprovalRepository implements ApprovalRepository {
     private readonly recommendations: RecommendationRepository,
   ) {}
 
-  saveRequest(request: ApprovalRequest): void {
-    if (!this.organizations.get(request.organizationId)) {
+  async saveRequest(request: ApprovalRequest): Promise<void> {
+    if (!(await this.organizations.get(request.organizationId))) {
       throw new ReferentialIntegrityViolation(
         `ApprovalRequest references unknown organization "${request.organizationId}".`,
       );
     }
-    const recommendation = this.recommendations.get(request.organizationId, request.recommendationId);
+    const recommendation = await this.recommendations.get(request.organizationId, request.recommendationId);
     if (!recommendation) {
       throw new ReferentialIntegrityViolation(
         `ApprovalRequest references recommendation "${request.recommendationId}" not found under organization "${request.organizationId}".`,
@@ -45,19 +45,26 @@ export class PersistentApprovalRepository implements ApprovalRepository {
     this.requests.set(request.approvalRequestId, { ...request });
   }
 
-  getRequest(approvalRequestId: string): ApprovalRequest | undefined {
+  /** A request that exists but belongs to a different organization is treated as not found — mirrors RLS row-hiding. */
+  async getRequest(organizationId: string, approvalRequestId: string): Promise<ApprovalRequest | undefined> {
     const request = this.requests.get(approvalRequestId);
-    return request ? { ...request } : undefined;
+    if (!request || request.organizationId !== organizationId) return undefined;
+    return { ...request };
   }
 
-  updateRequestStatus(approvalRequestId: string, status: ApprovalRequestStatus, decidedAt: string): void {
+  async updateRequestStatus(
+    organizationId: string,
+    approvalRequestId: string,
+    status: ApprovalRequestStatus,
+    decidedAt: string,
+  ): Promise<void> {
     const request = this.requests.get(approvalRequestId);
-    if (!request) return;
+    if (!request || request.organizationId !== organizationId) return;
     this.requests.set(approvalRequestId, { ...request, status, decidedAt });
   }
 
   /** Append-only by construction: no updateRecord/deleteRecord exists on this class or the port it implements. */
-  appendRecord(record: ApprovalRecord): void {
+  async appendRecord(record: ApprovalRecord): Promise<void> {
     const request = this.requests.get(record.approvalRequestId);
     if (!request) {
       throw new ReferentialIntegrityViolation(
@@ -76,7 +83,15 @@ export class PersistentApprovalRepository implements ApprovalRepository {
     this.records.push(record);
   }
 
-  listRecords(approvalRequestId: string): ApprovalRecord[] {
-    return this.records.filter((record) => record.approvalRequestId === approvalRequestId);
+  async listRecords(organizationId: string, approvalRequestId: string): Promise<ApprovalRecord[]> {
+    return this.records.filter(
+      (record) => record.approvalRequestId === approvalRequestId && record.organizationId === organizationId,
+    );
+  }
+
+  /** In-memory: no real transaction available, so this just sequences the two writes (same as governance.ts used to). */
+  async recordDecision(request: ApprovalRequest, record: ApprovalRecord): Promise<void> {
+    await this.updateRequestStatus(request.organizationId, request.approvalRequestId, request.status, request.decidedAt ?? record.decidedAt);
+    await this.appendRecord(record);
   }
 }

@@ -41,3 +41,18 @@ export class DuplicateEntityError extends Error {
     this.name = 'DuplicateEntityError';
   }
 }
+
+/**
+ * DATA-W3: the atomic terminal-transition UPDATE (WHERE status = 'PENDING')
+ * affected zero rows — either a genuine concurrent decision won the race, or
+ * the request was already decided/expired/cancelled by the time this
+ * transaction ran. Thrown only by PostgresApprovalRepository.recordDecision;
+ * the in-memory repositories can't observe this since they have no real
+ * concurrency to race against.
+ */
+export class ApprovalRequestConcurrencyError extends Error {
+  constructor(approvalRequestId: string) {
+    super(`Approval request "${approvalRequestId}" was not PENDING at the moment of decision (lost a concurrent race or already decided).`);
+    this.name = 'ApprovalRequestConcurrencyError';
+  }
+}
