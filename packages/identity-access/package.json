@@ -1,0 +1,29 @@
+{
+  "name": "@samvardiq/identity-access",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Identity, organization membership, and trusted-organization-context foundation (ARCH-016). Provider-independent — no Supabase SDK. In-memory reference repositories plus a PostgreSQL/Drizzle physical adapter for organization_memberships (RLS'd) and platform-global identities/identity_provider_links (not RLS'd — see src/postgres/schema.ts).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test",
+    "db:generate": "drizzle-kit generate"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "embedded-postgres": "18.4.0-beta.17",
+    "eslint": "^9.15.0",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}
