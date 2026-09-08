@@ -59,6 +59,7 @@ Future founders, engineers, designers, AI Executives, and contributors should be
 | PROD-001 | Human-in-Control Decision Framework | Approved |
 | ARCH-003 | Architecture Before Code | Approved |
 | ARCH-015 | Transactional Persistence Architecture (PostgreSQL / Supabase / Drizzle) | Approved |
+| ARCH-016 | Authentication and Trusted Organization Access Architecture | Approved |
 
 ---
 
@@ -1236,6 +1237,123 @@ repeat.
 ### Review Date
 
 Before production migrations are finalized (DATA-W3).
+
+### Owner
+
+Founder Office
+
+---
+
+## ARCH-016
+
+### Title
+
+Authentication and Trusted Organization Access Architecture
+
+### Date
+
+08 September 2026
+
+### Status
+
+Approved
+
+### Category
+
+Architecture
+
+### Decision
+
+Samvardiq adopts Supabase Auth as its authentication provider, behind
+an identity provider adapter. Samvardiq owns all authorization state —
+internal identities, organization memberships, organization roles,
+approval-authority association, service-principal scope, and platform
+administration — in its own PostgreSQL tables, never in the provider's
+system.
+
+Provider user identifiers must never become Samvardiq's universal
+identity id. `TrustedOrganizationContext` is the only sanctioned
+organization-authority object passed into protected application
+services; a client-supplied `organizationId` identifies which
+organization is being requested but never establishes authorization.
+Only an `ACTIVE` identity with an `ACTIVE` organization membership may
+establish trusted organization context, verified authoritatively
+server-side.
+
+Initial organization roles are `OWNER`, `MEMBER`, `VIEWER` — access
+roles only. The existing `ApproverRole`/`ROLE_AUTHORITY` approval-
+governance system remains entirely separate; organization role must
+never automatically imply approval authority. Human, AI, and service
+principals remain distinguishable at the identity layer; AI/service
+principals can never obtain human approval authority.
+
+`SUPER_ADMIN` platform administration never automatically grants tenant
+membership or tenant data access. Any future exceptional platform
+support access requires a separately designed, explicit, auditable,
+reasoned, time-bounded break-glass grant.
+
+Authentication/authorization uncertainty fails closed in every case.
+Row Level Security (ARCH-015) remains database-level defense-in-depth
+and is not replaced, weakened, or treated as authentication by this
+decision.
+
+### Reasoning
+
+This decision formally approves `docs/decisions/ADR-IDENTITY-001.md`
+(IDENTITY-W1A/W1), which closes the trust gap DATA-W3 explicitly
+documented but did not solve: `withOrganizationContext()` trusted
+whatever `organizationId` a caller supplied, with nothing upstream
+verifying the caller was a real, currently-authorized identity.
+
+Supabase Auth was selected over Auth.js, Clerk, Auth0, and Better Auth
+via a weighted decision matrix, primarily on architecture fit (same
+Postgres project already approved in ADR-DATA-001, no cross-system
+membership-sync pipeline required) and pilot-stage operational cost (no
+new vendor beyond hosting already approved) — not on raw security
+pedigree alone, where Auth0 scored higher. Full candidate comparison
+and matrix are preserved in ADR-IDENTITY-001 and not repeated here.
+
+The three-level organization role model is a deliberate trim from a
+five-level illustrative example considered during drafting — no current
+requirement justifies more, and growing the role set later is additive,
+not a redesign.
+
+### Risks
+
+- Supabase Auth has no built-in "organizations" primitive, so
+  membership/role logic must be built and maintained by Samvardiq —
+  treated as an advantage here (it is exactly the state Samvardiq needs
+  to own regardless of provider), but a real ongoing maintenance
+  surface nonetheless.
+- A break-glass platform-support mechanism, if designed carelessly when
+  eventually built, is a real privilege-escalation risk — deliberately
+  left unspecified now rather than rubber-stamped.
+- A coarse three-level organization role may need to grow; mitigated by
+  keeping the role field and its consumers isolated behind the
+  membership table so growth is additive.
+
+### Impact
+
+- New identity/authorization boundary (`packages/identity-access/` or
+  equivalent, per IDENTITY-W2)
+- Data Layer (new organization-scoped tables, RLS'd the same way as
+  DATA-W3's tables)
+- Approval & Governance Layer (integration point only — `ApproverRole`/
+  `ROLE_AUTHORITY` themselves unchanged)
+- Future HTTP/API layer (not yet built) — must accept
+  `TrustedOrganizationContext`, never raw `organizationId`
+
+### Source
+
+`docs/decisions/ADR-IDENTITY-001.md` (IDENTITY-W1A/W1) — see that
+document for the full threat model, candidate comparison, weighted
+decision matrix, identity/membership/role model detail, failure model,
+and deferred decisions this entry does not repeat.
+
+### Review Date
+
+Before live Supabase Auth integration and before any break-glass
+platform-support mechanism is built.
 
 ### Owner
 
