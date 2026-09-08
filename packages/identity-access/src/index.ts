@@ -4,3 +4,4 @@ export * from './identityRepository.js';
 export * from './providerLinkRepository.js';
 export * from './membershipRepository.js';
 export * from './authorizationService.js';
+export * from './identityProviderAdapter.js';

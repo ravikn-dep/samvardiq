@@ -87,3 +87,48 @@ export class DuplicateProviderLinkError extends Error {
     this.name = 'DuplicateProviderLinkError';
   }
 }
+
+/**
+ * IDENTITY-W3 — identity provider verification errors. None of these
+ * constructors ever embed the raw credential/token value in the message
+ * (see the security audit note in providers/supabaseIdentityProviderAdapter.ts) —
+ * only a stable, non-sensitive reason string.
+ */
+
+/** The credential itself is structurally or cryptographically unacceptable — malformed, unsigned, wrong algorithm, wrong issuer, tampered signature, or missing a required claim. */
+export class InvalidCredentialError extends Error {
+  constructor(reason: string) {
+    super(`Credential verification failed: ${reason}`);
+    this.name = 'InvalidCredentialError';
+  }
+}
+
+export class ExpiredCredentialError extends Error {
+  constructor() {
+    super('Credential has expired.');
+    this.name = 'ExpiredCredentialError';
+  }
+}
+
+/** The identity provider could not be reached (network/timeout) — never treated as a pass. */
+export class ProviderUnavailableError extends Error {
+  constructor(provider: string, reason: string) {
+    super(`Identity provider "${provider}" is unavailable: ${reason}`);
+    this.name = 'ProviderUnavailableError';
+  }
+}
+
+/** A verification failure that isn't cleanly attributable to "bad credential" or "provider unreachable" — still fails closed. */
+export class ProviderVerificationFailureError extends Error {
+  constructor(provider: string, reason: string) {
+    super(`Identity provider "${provider}" verification failed: ${reason}`);
+    this.name = 'ProviderVerificationFailureError';
+  }
+}
+
+export class ProviderConfigurationError extends Error {
+  constructor(provider: string, reason: string) {
+    super(`Identity provider "${provider}" is misconfigured: ${reason}`);
+    this.name = 'ProviderConfigurationError';
+  }
+}
