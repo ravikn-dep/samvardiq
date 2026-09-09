@@ -1,0 +1,31 @@
+{
+  "name": "@samvardiq/application-services",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Protected application request boundary (IDENTITY-W4): framework-neutral authentication/authorization boundary composing identity-access's TrustedOrganizationContext with data-foundation's organization-scoped repositories. No HTTP framework — request boundary contracts only, ready to be wired into a router once one is chosen (a separate, explicit decision, not made here).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build:deps": "npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance && npm run build --prefix ../data-foundation && npm run build --prefix ../identity-access",
+    "pretypecheck": "npm run build:deps",
+    "typecheck": "tsc -p tsconfig.json",
+    "prebuild": "npm run build:deps",
+    "build": "tsc -p tsconfig.build.json",
+    "pretest": "npm run build:deps",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test"
+  },
+  "devDependencies": {
+    "@samvardiq/data-foundation": "file:../data-foundation",
+    "@samvardiq/identity-access": "file:../identity-access",
+    "@types/node": "^22.10.0",
+    "embedded-postgres": "18.4.0-beta.17",
+    "eslint": "^9.15.0",
+    "jose": "^6.2.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}
