@@ -4,6 +4,7 @@ import {
   createPostgresClient as createIdentityClient,
   PostgresIdentityRepository,
   PostgresIdentityProviderLinkRepository,
+  PostgresMembershipAdministrationService,
   PostgresMembershipRepository,
 } from '@samvardiq/identity-access/dist/postgres/index.js';
 import {
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
   const providerLinks = new PostgresIdentityProviderLinkRepository(identityClient.db);
   const memberships = new PostgresMembershipRepository(identityClient.db);
   const authz = new AuthorizationService(identities, providerLinks, memberships);
+  const membershipAdmin = new PostgresMembershipAdministrationService(identityClient.db, identities);
 
   const organizations = new PostgresOrganizationRepository(dataFoundationClient.db);
   const goals = new PostgresGoalRepository(dataFoundationClient.db);
@@ -42,7 +44,7 @@ async function main(): Promise<void> {
 
   const identityProvider = new SupabaseIdentityProviderAdapter(loadSupabaseConfigFromEnv());
 
-  const app = await buildServer({ identityProvider, authz, organizations, goalReadService }, config);
+  const app = await buildServer({ identityProvider, authz, organizations, goalReadService, membershipAdmin }, config);
 
   // Section 31: stop accepting new connections, let in-flight requests
   // finish (fastify.close()'s own default behavior), then release the

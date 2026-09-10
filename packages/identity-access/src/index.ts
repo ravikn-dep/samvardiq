@@ -8,3 +8,5 @@ export * from './identityProviderAdapter.js';
 export * from './identityAuditEvent.js';
 export * from './identityAuditRepository.js';
 export * from './auditSafety.js';
+export * from './membershipAdministrationPolicy.js';
+export * from './membershipLifecycle.js';

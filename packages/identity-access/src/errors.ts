@@ -170,3 +170,51 @@ export class MembershipTransitionConcurrencyError extends Error {
     this.name = 'MembershipTransitionConcurrencyError';
   }
 }
+
+/**
+ * IDENTITY-W7 — membership administration. The acting TrustedOrganizationContext
+ * does not satisfy MembershipAdministrationPolicy (not an ACTIVE human OWNER of
+ * the organization it claims to act on). Deliberately generic — never
+ * distinguishes "you're a MEMBER" from "you're a VIEWER" from "you're a
+ * service principal" in its message, matching the existing non-enumeration
+ * posture already established for organization/membership denials.
+ */
+export class MembershipAdministrationForbiddenError extends Error {
+  constructor() {
+    super('This action requires organization OWNER administration authority.');
+    this.name = 'MembershipAdministrationForbiddenError';
+  }
+}
+
+/** A requested lifecycle transition (status or role) is not permitted from the membership's current state — never a raw "assign whatever status/role the client sent" operation. */
+export class InvalidMembershipTransitionError extends Error {
+  constructor(reason: string) {
+    super(`Invalid membership transition: ${reason}`);
+    this.name = 'InvalidMembershipTransitionError';
+  }
+}
+
+/** The identity targeted for a NEW membership does not exist, or is not in a state eligible to receive one (see PostgresMembershipAdministrationService.createInvitedMembership's doc comment for exactly which states qualify). */
+export class TargetIdentityUnavailableError extends Error {
+  constructor() {
+    super('The target identity is not available to receive this membership.');
+    this.name = 'TargetIdentityUnavailableError';
+  }
+}
+
+/**
+ * ARCH-016/ADR-IDENTITY-001 do not name this invariant explicitly, but it
+ * is a direct, uncontroversial corollary of the already-approved role
+ * model ("OWNER can manage the organization itself") — an organization
+ * with zero ACTIVE OWNERs has nobody left able to manage it, which the
+ * role model's own stated purpose for OWNER cannot tolerate. See the
+ * IDENTITY-W7 session report's "Last-Owner / Self-Modification Policy"
+ * section for the full reasoning on why this was implemented directly
+ * rather than escalated for Founder approval.
+ */
+export class LastActiveOwnerViolationError extends Error {
+  constructor() {
+    super('This action would leave the organization with no ACTIVE OWNER.');
+    this.name = 'LastActiveOwnerViolationError';
+  }
+}

@@ -5,6 +5,7 @@ import { AuthorizationService } from '@samvardiq/identity-access';
 import {
   PostgresIdentityRepository,
   PostgresIdentityProviderLinkRepository,
+  PostgresMembershipAdministrationService,
   PostgresMembershipRepository,
 } from '@samvardiq/identity-access/dist/postgres/index.js';
 import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist/providers/index.js';
@@ -44,8 +45,9 @@ before(async () => {
   const organizations = new PostgresOrganizationRepository(harness.dataFoundationApp.db);
   const goals = new PostgresGoalRepository(harness.dataFoundationApp.db);
   const goalReadService = new GoalReadService(goals);
+  const membershipAdmin = new PostgresMembershipAdministrationService(harness.identityApp.db, identities);
 
-  app = await buildServer({ identityProvider, authz, organizations, goalReadService }, defaultTestConfig());
+  app = await buildServer({ identityProvider, authz, organizations, goalReadService, membershipAdmin }, defaultTestConfig());
   await app.ready();
 });
 

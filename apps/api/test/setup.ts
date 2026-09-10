@@ -15,10 +15,35 @@ import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist
 import type { MembershipStatus, PrincipalType } from '@samvardiq/identity-access';
 import { InMemoryGoalRepository, InMemoryOrganizationRepository } from '@samvardiq/data-foundation';
 import { GoalReadService } from '@samvardiq/application-services';
+import type { PostgresMembershipAdministrationService } from '@samvardiq/identity-access/dist/postgres/index.js';
 
 import { buildServer, type BuildServerOptions } from '../src/server.js';
 import type { ApiConfig } from '../src/config.js';
 import { createTestIssuer, type TestIssuer } from '../../../packages/identity-access/test/jwksTestHelper.js';
+
+/**
+ * The goals/health/security/config test suites in this file never exercise
+ * the membership-administration routes — those are proven against a real
+ * Postgres-backed `PostgresMembershipAdministrationService` in
+ * test/integration/memberships.test.ts (section 32: never mock the
+ * transaction/authorization boundary a test actually claims). This stub
+ * exists only to satisfy `buildServer`'s dependency type for the unrelated
+ * tests in this file; any accidental call fails loudly rather than
+ * silently returning a fake result.
+ */
+function unusedMembershipAdminStub(): PostgresMembershipAdministrationService {
+  const notImplemented = () => {
+    throw new Error('membershipAdmin is not wired in this test world — see test/integration/memberships.test.ts');
+  };
+  return {
+    createInvitedMembership: notImplemented,
+    activateMembership: notImplemented,
+    reactivateMembership: notImplemented,
+    suspendMembership: notImplemented,
+    revokeMembership: notImplemented,
+    changeRole: notImplemented,
+  } as unknown as PostgresMembershipAdministrationService;
+}
 
 export function defaultTestConfig(overrides: Partial<ApiConfig> = {}): ApiConfig {
   return {
@@ -57,7 +82,11 @@ export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, optio
   const issuer = await createTestIssuer();
   const identityProvider = new SupabaseIdentityProviderAdapter({ projectUrl: issuer.projectUrl, jwksOptions: issuer.jwksOptions });
 
-  const app = await buildServer({ identityProvider, authz, organizations, goalReadService }, defaultTestConfig(configOverrides), options);
+  const app = await buildServer(
+    { identityProvider, authz, organizations, goalReadService, membershipAdmin: unusedMembershipAdminStub() },
+    defaultTestConfig(configOverrides),
+    options,
+  );
   await app.ready();
 
   return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService };
@@ -76,6 +105,7 @@ export async function buildAppVariant(
       authz: world.authz,
       organizations: world.organizations,
       goalReadService: overrides.goalReadService ?? world.goalReadService,
+      membershipAdmin: unusedMembershipAdminStub(),
     },
     defaultTestConfig(configOverrides),
     options,

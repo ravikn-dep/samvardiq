@@ -5,3 +5,4 @@ export * from './providerLinkRepository.js';
 export * from './membershipRepository.js';
 export * from './identityAuditRepository.js';
 export * from './membershipTransitionCoordinator.js';
+export * from './membershipAdministrationService.js';

@@ -1,18 +1,24 @@
 import {
+  DuplicateEntityError,
   ExpiredCredentialError,
   InactiveIdentityError,
   InvalidCredentialError,
+  InvalidMembershipTransitionError,
+  LastActiveOwnerViolationError,
+  MembershipAdministrationForbiddenError,
   MembershipNotActiveError,
   MembershipNotFoundError,
+  MembershipTransitionConcurrencyError,
   ProviderIdentityNotLinkedError,
   ProviderUnavailableError,
   ProviderVerificationFailureError,
+  TargetIdentityUnavailableError,
   UnauthenticatedPrincipalError,
   UnknownIdentityError,
   UnknownOrganizationError,
 } from '@samvardiq/identity-access';
 
-export type ErrorClass = 'UNAUTHENTICATED' | 'FORBIDDEN' | 'AUTH_PROVIDER_UNAVAILABLE' | 'INTERNAL';
+export type ErrorClass = 'UNAUTHENTICATED' | 'FORBIDDEN' | 'AUTH_PROVIDER_UNAVAILABLE' | 'CONFLICT' | 'INTERNAL';
 
 export interface ClassifiedError {
   errorClass: ErrorClass;
@@ -52,9 +58,32 @@ export function classifyError(error: unknown): ClassifiedError {
     error instanceof MembershipNotActiveError ||
     error instanceof ProviderIdentityNotLinkedError ||
     error instanceof UnknownIdentityError ||
-    error instanceof InactiveIdentityError
+    error instanceof InactiveIdentityError ||
+    error instanceof MembershipAdministrationForbiddenError ||
+    error instanceof TargetIdentityUnavailableError
   ) {
+    // IDENTITY-W7: MembershipAdministrationForbiddenError (not an OWNER) and
+    // TargetIdentityUnavailableError (unknown/suspended/revoked target
+    // identity) are collapsed into the same FORBIDDEN/403 as every other
+    // denial here, for the identical non-enumeration reason already
+    // established above — a caller must not be able to distinguish "you
+    // lack authority" from "that identity doesn't exist" from "that
+    // identity isn't eligible."
     return { errorClass: 'FORBIDDEN', httpStatus: 403, message: 'Access denied.' };
+  }
+
+  if (
+    error instanceof DuplicateEntityError ||
+    error instanceof InvalidMembershipTransitionError ||
+    error instanceof LastActiveOwnerViolationError ||
+    error instanceof MembershipTransitionConcurrencyError
+  ) {
+    // IDENTITY-W7: the request was authenticated and authorized, but
+    // conflicts with the target's current state (already exists, an
+    // invalid lifecycle transition, would remove the last ACTIVE OWNER, or
+    // lost a concurrent compare-and-swap race) — 409 Conflict, never a
+    // generic 500, and never the underlying SQL/constraint detail.
+    return { errorClass: 'CONFLICT', httpStatus: 409, message: 'Request conflicts with the current state of this resource.' };
   }
 
   return { errorClass: 'INTERNAL', httpStatus: 500, message: 'Internal server error.' };

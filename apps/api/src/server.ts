@@ -5,11 +5,14 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 
-import { classifyError } from '@samvardiq/application-services';
+import { classifyError, type MembershipAdministrationDependencies } from '@samvardiq/application-services';
 
 import type { ApiConfig } from './config.js';
 import { healthRoute } from './routes/health.js';
 import { goalsRoute, type GoalsRouteDependencies } from './routes/goals.js';
+import { membershipsRoute } from './routes/memberships.js';
+
+export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies;
 
 /**
  * Composition-root server builder (section 33/17). Takes already-constructed
@@ -24,7 +27,7 @@ export interface BuildServerOptions {
   loggerStream?: NodeJS.WritableStream;
 }
 
-export async function buildServer(deps: GoalsRouteDependencies, config: ApiConfig, options: BuildServerOptions = {}): Promise<FastifyInstance> {
+export async function buildServer(deps: AppDependencies, config: ApiConfig, options: BuildServerOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     // Section 25: request IDs are always server-generated, never trusted from
     // an inbound header (an attacker-controlled request id must never be
@@ -33,10 +36,23 @@ export async function buildServer(deps: GoalsRouteDependencies, config: ApiConfi
     requestIdHeader: false,
     // Section 30: only trust X-Forwarded-* when a reverse proxy is explicitly configured.
     trustProxy: config.trustProxy,
-    // Section 22: no route in this session accepts a body; kept small and can
-    // be raised per-route (via a route-level `bodyLimit`) once a real
-    // request-body endpoint (e.g. a future webhook) is actually added.
+    // Section 22 (W5) / 21 (W7): request bodies are small, fixed-shape JSON
+    // (membership create/role-change) — kept small and can be raised
+    // per-route (via a route-level `bodyLimit`) once a real larger-body
+    // endpoint (e.g. a future webhook) is actually added.
     bodyLimit: 16 * 1024,
+    // IDENTITY-W7 section 21: "reject unknown fields where practical."
+    // Fastify's own default (removeAdditional: true) SILENTLY STRIPS any
+    // property not named in a schema's `properties` instead of rejecting
+    // the request — verified during this session: a body carrying a
+    // spoofed `organizationId`/`actorIdentityId`/`status` alongside valid
+    // fields was accepted (201) with the extra fields quietly dropped,
+    // not rejected. That is not a security hole (the dropped fields are
+    // never read regardless), but it is not what section 21 asks for.
+    // Disabling `removeAdditional` makes every `additionalProperties:
+    // false` schema in this app (params, body, response) fail closed with
+    // a 400 instead of silently discarding the unexpected field.
+    ajv: { customOptions: { removeAdditional: false } },
     logger: {
       level: config.nodeEnv === 'production' ? 'info' : 'debug',
       // Section 24: Fastify's default request/response log lines never include
@@ -112,6 +128,7 @@ export async function buildServer(deps: GoalsRouteDependencies, config: ApiConfi
 
   healthRoute(app);
   goalsRoute(app, deps);
+  membershipsRoute(app, deps);
 
   return app;
 }
