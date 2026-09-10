@@ -46,14 +46,14 @@ async function provisionHuman(identityId: string, subject: string, organizationI
   await memberships.create({ organizationId, identityId, role: opts.role ?? 'MEMBER', status: opts.status ?? 'ACTIVE' });
 }
 
-// A — migration establishes all 3 tables
-test('migration establishes all 3 tables', async () => {
+// A — migration establishes all 4 tables (IDENTITY-W6 adds identity_audit_events)
+test('migration establishes all 4 tables', async () => {
   const rows = await harness.owner.pool.query(
     `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`,
   );
   assert.deepEqual(
     rows.rows.map((r: { table_name: string }) => r.table_name),
-    ['identities', 'identity_provider_links', 'organization_memberships'],
+    ['identities', 'identity_audit_events', 'identity_provider_links', 'organization_memberships'],
   );
 });
 

@@ -45,7 +45,9 @@ export async function startHarness(port: number): Promise<Harness> {
   });
 
   async function truncateAll(): Promise<void> {
-    await owner.pool.query('TRUNCATE organization_memberships, identity_provider_links, identities RESTART IDENTITY CASCADE');
+    await owner.pool.query(
+      'TRUNCATE identity_audit_events, organization_memberships, identity_provider_links, identities RESTART IDENTITY CASCADE',
+    );
   }
 
   async function stop(): Promise<void> {

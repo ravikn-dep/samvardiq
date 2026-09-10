@@ -132,3 +132,41 @@ export class ProviderConfigurationError extends Error {
     this.name = 'ProviderConfigurationError';
   }
 }
+
+/**
+ * IDENTITY-W6 — identity security audit. `reason`/`metadata` failed the
+ * bounded-safety check in auditSafety.ts (too large, disallowed keyword/
+ * shape, or an unrecognized metadata key). Thrown BEFORE any database
+ * write is attempted.
+ */
+export class AuditReasonValidationError extends Error {
+  constructor(reason: string) {
+    super(`Audit event reason rejected: ${reason}`);
+    this.name = 'AuditReasonValidationError';
+  }
+}
+
+export class AuditMetadataValidationError extends Error {
+  constructor(reason: string) {
+    super(`Audit event metadata rejected: ${reason}`);
+    this.name = 'AuditMetadataValidationError';
+  }
+}
+
+/**
+ * The membership status compare-and-swap (WHERE status = expectedStatus)
+ * matched zero rows — either no such membership exists, or its status no
+ * longer matches `expectedStatus` (lost a concurrent race, or was already
+ * transitioned). Mirrors data-foundation's ApprovalRequestConcurrencyError
+ * for the identical CAS-transaction failure shape. The whole transaction
+ * (mutation AND its mandatory audit event) rolls back — no audit record is
+ * ever created for a mutation that did not happen.
+ */
+export class MembershipTransitionConcurrencyError extends Error {
+  constructor(organizationId: string, identityId: string, expectedStatus: string) {
+    super(
+      `Membership for identity "${identityId}" in organization "${organizationId}" was not "${expectedStatus}" at the moment of transition (lost a concurrent race or already transitioned).`,
+    );
+    this.name = 'MembershipTransitionConcurrencyError';
+  }
+}

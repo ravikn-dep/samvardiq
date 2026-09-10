@@ -73,7 +73,7 @@ export async function startHarness(port: number): Promise<Harness> {
 
   async function truncateAll(): Promise<void> {
     await dataFoundationOwner.pool.query(
-      'TRUNCATE approval_records, approval_requests, recommendations, goals, organizations, organization_memberships, identity_provider_links, identities RESTART IDENTITY CASCADE',
+      'TRUNCATE approval_records, approval_requests, recommendations, goals, organizations, identity_audit_events, organization_memberships, identity_provider_links, identities RESTART IDENTITY CASCADE',
     );
   }
 

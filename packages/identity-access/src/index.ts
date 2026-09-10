@@ -5,3 +5,6 @@ export * from './providerLinkRepository.js';
 export * from './membershipRepository.js';
 export * from './authorizationService.js';
 export * from './identityProviderAdapter.js';
+export * from './identityAuditEvent.js';
+export * from './identityAuditRepository.js';
+export * from './auditSafety.js';

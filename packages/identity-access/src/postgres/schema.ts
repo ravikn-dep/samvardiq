@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, foreignKey, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
+import { check, foreignKey, jsonb, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
 
 /**
  * Physical PostgreSQL schema (IDENTITY-W2, ARCH-016).
@@ -52,6 +52,72 @@ export const identityProviderLinks = pgTable(
       columns: [table.identityId],
       foreignColumns: [identities.identityId],
     }),
+  ],
+);
+
+/**
+ * IDENTITY-W6, ADR-IDENTITY-001 "Audit Requirements": append-only identity
+ * security audit trail. Same immutability philosophy already proven for
+ * `approval_records` in data-foundation (INSERT/SELECT-only GRANT, plus a
+ * role-independent BEFORE UPDATE/DELETE trigger — see
+ * drizzle/0002_identity_audit_events_immutability.sql).
+ *
+ * `organizationId` is nullable BY DESIGN, not sloppiness: `IDENTITY_*` and
+ * `PROVIDER_LINK_*` events are platform-global (an identity is not owned by
+ * one organization), while `MEMBERSHIP_*` events are always organization-
+ * scoped. The check constraint below enforces exactly this split at the
+ * database layer, not merely by application convention — see RLS policy in
+ * the same migration for how NULL-scoped rows are kept invisible to any
+ * tenant context (never "visible to everyone").
+ *
+ * No FK to data-foundation's `organizations` table, for the same
+ * package-boundary reason `organization_memberships` has none (see this
+ * file's own top-of-file note and src/types.ts).
+ */
+export const identityAuditEvents = pgTable(
+  'identity_audit_events',
+  {
+    eventId: text('event_id').primaryKey(),
+    organizationId: text('organization_id'),
+    actorIdentityId: text('actor_identity_id'),
+    actorPrincipalType: text('actor_principal_type').notNull(),
+    eventType: text('event_type').notNull(),
+    targetType: text('target_type').notNull(),
+    targetId: text('target_id').notNull(),
+    outcome: text('outcome').notNull(),
+    reason: text('reason'),
+    requestId: text('request_id'),
+    metadata: jsonb('metadata').notNull().default({}),
+    // Database-generated occurrence time (section 17) — never accepted as a
+    // caller-supplied value; see the audit repository, which has no field
+    // for it in its append() input.
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'identity_audit_events_actor_identity_fkey',
+      columns: [table.actorIdentityId],
+      foreignColumns: [identities.identityId],
+    }),
+    check(
+      'identity_audit_events_actor_principal_type_check',
+      sql`${table.actorPrincipalType} IN ('human','service','system')`,
+    ),
+    check(
+      'identity_audit_events_actor_consistency_check',
+      sql`(${table.actorPrincipalType} = 'system' AND ${table.actorIdentityId} IS NULL) OR (${table.actorPrincipalType} IN ('human','service') AND ${table.actorIdentityId} IS NOT NULL)`,
+    ),
+    check(
+      'identity_audit_events_event_type_check',
+      sql`${table.eventType} IN ('IDENTITY_CREATED','IDENTITY_STATUS_CHANGED','PROVIDER_LINK_CREATED','PROVIDER_LINK_REMOVED','MEMBERSHIP_CREATED','MEMBERSHIP_STATUS_CHANGED','MEMBERSHIP_ROLE_CHANGED','AUTHENTICATION_FAILED','AUTHORIZATION_FAILED')`,
+    ),
+    check(
+      'identity_audit_events_organization_scope_check',
+      sql`(${table.eventType} IN ('MEMBERSHIP_CREATED','MEMBERSHIP_STATUS_CHANGED','MEMBERSHIP_ROLE_CHANGED') AND ${table.organizationId} IS NOT NULL) OR (${table.eventType} IN ('IDENTITY_CREATED','IDENTITY_STATUS_CHANGED','PROVIDER_LINK_CREATED','PROVIDER_LINK_REMOVED') AND ${table.organizationId} IS NULL) OR ${table.eventType} IN ('AUTHENTICATION_FAILED','AUTHORIZATION_FAILED')`,
+    ),
+    check('identity_audit_events_target_type_check', sql`${table.targetType} IN ('IDENTITY','MEMBERSHIP','PROVIDER_LINK')`),
+    check('identity_audit_events_outcome_check', sql`${table.outcome} IN ('SUCCESS','DENIED','FAILED')`),
+    check('identity_audit_events_reason_length_check', sql`${table.reason} IS NULL OR char_length(${table.reason}) <= 500`),
   ],
 );
 
