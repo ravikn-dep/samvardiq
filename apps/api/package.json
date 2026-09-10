@@ -1,0 +1,35 @@
+{
+  "name": "@samvardiq/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal production HTTP server (IDENTITY-W5B): wires the framework-neutral request boundary from application-services into a real Fastify router (ARCH-017). No authentication/authorization/business logic lives here — transport plumbing only.",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build:deps": "npm run build --prefix ../../packages/marketing-intelligence && npm run build --prefix ../../packages/approval-governance && npm run build --prefix ../../packages/data-foundation && npm run build --prefix ../../packages/identity-access && npm run build --prefix ../../packages/application-services",
+    "pretypecheck": "npm run build:deps",
+    "typecheck": "tsc -p tsconfig.json",
+    "prebuild": "npm run build:deps",
+    "build": "tsc -p tsconfig.build.json",
+    "pretest": "npm run build:deps",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/rate-limit": "^11.2.0",
+    "@samvardiq/application-services": "file:../../packages/application-services",
+    "@samvardiq/data-foundation": "file:../../packages/data-foundation",
+    "@samvardiq/identity-access": "file:../../packages/identity-access",
+    "@types/node": "^22.10.0",
+    "embedded-postgres": "18.4.0-beta.17",
+    "eslint": "^9.15.0",
+    "fastify": "^5.12.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}
