@@ -60,6 +60,7 @@ Future founders, engineers, designers, AI Executives, and contributors should be
 | ARCH-003 | Architecture Before Code | Approved |
 | ARCH-015 | Transactional Persistence Architecture (PostgreSQL / Supabase / Drizzle) | Approved |
 | ARCH-016 | Authentication and Trusted Organization Access Architecture | Approved |
+| ARCH-017 | HTTP Server and Routing Architecture | Approved |
 
 ---
 
@@ -1354,6 +1355,122 @@ and deferred decisions this entry does not repeat.
 
 Before live Supabase Auth integration and before any break-glass
 platform-support mechanism is built.
+
+### Owner
+
+Founder Office
+
+---
+
+## ARCH-017
+
+### Title
+
+HTTP Server and Routing Architecture
+
+### Date
+
+10 September 2026
+
+### Status
+
+Approved
+
+### Category
+
+Architecture
+
+### Decision
+
+Samvardiq adopts Fastify as its HTTP server and routing framework, with
+`@fastify/cors`, `@fastify/rate-limit`, and `@fastify/helmet` as the
+initial official plugin set. Fastify is transport infrastructure only:
+it must never become the authority for authentication semantics,
+organization authorization, tenant isolation, approval authority, or
+business-domain rules. A Fastify route handler may extract transport-
+shaped values (headers, route params) and pass them to an existing
+`application-services` function; it may never itself decode a JWT,
+query membership, query the database, construct a
+`TrustedOrganizationContext`, or infer a role/`ApproverRole`.
+`application-services`, `identity-access`, and `data-foundation` may
+never depend on `apps/api` or on any HTTP library.
+
+### Reasoning
+
+This decision formally approves `docs/decisions/ADR-HTTP-001.md`
+(IDENTITY-W5A), which closes the gap `ARCH-016`/`ADR-IDENTITY-001.md`
+left explicit: IDENTITY-W4 built a complete, framework-neutral request
+boundary (`authenticateRequest`, `handleListGoalsRequest`,
+`classifyError`) with no HTTP framework wired to it, "a separate,
+explicit decision, not made here." Fastify was selected over Express
+and Hono via a weighted decision matrix (security/safe defaults,
+architecture fit, TypeScript quality, performance, validation/
+serialization, plugin ecosystem, testing, observability, webhooks,
+developer ergonomics, deployment portability), scoring 8.95 against
+Hono's 7.98 and Express's 6.35 — a clear, non-tied win concentrated in
+the heaviest-weighted criteria. NestJS and tRPC were evaluated and
+structurally disqualified: NestJS imposes DI/module ceremony this
+two-route server does not need; tRPC is RPC-shaped and cannot serve
+Samvardiq's real near-term traffic (third-party WhatsApp/Meta/CMS
+webhooks are not TypeScript-RPC clients). Full candidate comparison,
+weighted matrix, and architectural question-by-question analysis are
+preserved in ADR-HTTP-001 and not repeated here.
+
+### Alternatives Considered
+
+- Express (rejected — weakest on security/safe-defaults and
+  validation/serialization; no built-in schema validation)
+- Hono (rejected — genuinely competitive 2nd place; thinner
+  Node-specific plugin/observability ecosystem for Samvardiq's current
+  webhook/integration surface; noted as the most likely future
+  re-review candidate if edge deployment becomes a real requirement)
+- NestJS (not scored to the full matrix — architectural layer above
+  whichever transport it wraps; unjustified ceremony for a two-route
+  server)
+- tRPC (not scored to the full matrix — structurally wrong shape for
+  third-party webhook traffic)
+
+### Expected Benefits
+
+- Preserves IDENTITY-W4's framework-neutral application boundary with
+  zero code changes to `application-services`/`identity-access`/
+  `data-foundation`.
+- First-class JSON Schema validation and serialization at the
+  transport edge, as input hygiene ahead of (never instead of) the
+  existing authentication/authorization boundary.
+- Official, coordinated plugin set (`cors`, `rate-limit`, `helmet`)
+  gives a smaller, better-maintained security surface than assembling
+  independent third-party middleware for the same concerns.
+- Documented, supported extension points for future raw-body webhook
+  signature verification and streaming, without committing to either
+  this session.
+
+### Potential Risks
+
+- Four new first-party dependencies enter the repository
+  (`fastify`, `@fastify/cors`, `@fastify/rate-limit`,
+  `@fastify/helmet`), scoped entirely to the new `apps/api` package —
+  mitigated by using only official, Fastify-maintained plugins and
+  running a dependency audit as part of every validation pass.
+- Single-instance rate limiting is not sufficient at future horizontal
+  scale — explicitly documented as a known limitation with a
+  distributed-backing upgrade path, not silently accepted as adequate
+  forever.
+
+### Impact
+
+- New `apps/api` package (Fastify HTTP server, `GET /health`,
+  `GET /v1/organizations/:organizationId/goals`)
+- `application-services`, `identity-access`, `data-foundation`
+  (dependency-direction constraint only — no code changes required)
+- Future webhook/CMS/payment integration endpoints (extension point
+  confirmed compatible, not built this session)
+
+### Review Date
+
+If edge/multi-runtime deployment becomes a real requirement, or the
+API surface grows enough to justify NestJS-style module structure —
+see ADR-HTTP-001 "Future Review Triggers."
 
 ### Owner
 
