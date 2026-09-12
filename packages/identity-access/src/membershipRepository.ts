@@ -21,6 +21,17 @@ export interface MembershipRepository {
   create(input: CreateMembershipInput): Promise<OrganizationMembership>;
   get(organizationId: string, identityId: string): Promise<OrganizationMembership | undefined>;
   updateStatus(organizationId: string, identityId: string, status: MembershipStatus): Promise<void>;
+  /**
+   * IDENTITY-W8 — self-discovery only: every membership row belonging to
+   * this identityId, across ALL organizations. Never used to answer "who
+   * else is in this organization" (that remains org-scoped, via `get`).
+   * The Postgres implementation reads under `withIdentityContext`, a
+   * NEW, separate RLS read-path from `withOrganizationContext` — see
+   * postgres/client.ts and drizzle/0004_membership_self_discovery.sql for
+   * the full reasoning on why this is safe (write policies are
+   * completely unaffected; only SELECT gains a self-scoped OR-branch).
+   */
+  listByIdentity(identityId: string): Promise<OrganizationMembership[]>;
 }
 
 export class InMemoryMembershipRepository implements MembershipRepository {
@@ -72,5 +83,9 @@ export class InMemoryMembershipRepository implements MembershipRepository {
     if (status === 'SUSPENDED') next.suspendedAt = now;
     if (status === 'REVOKED') next.revokedAt = now;
     this.memberships.set(key, next);
+  }
+
+  async listByIdentity(identityId: string): Promise<OrganizationMembership[]> {
+    return [...this.memberships.values()].filter((m) => m.identityId === identityId).map((m) => ({ ...m }));
   }
 }

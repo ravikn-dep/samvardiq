@@ -274,8 +274,12 @@ test('S: suspending an identity denies the very next resolution attempt', async 
 
 // T — missing authorization bootstrap context cannot become a general tenant database bypass
 // (structural proof at this layer; the full RLS-backed proof lives in test/integration)
-test('T: AuthorizationService exposes no method other than resolveTrustedContext capable of returning authority', () => {
+test('T: AuthorizationService exposes exactly two public methods, neither a bypass — resolveTrustedContext (returns authority) and listEligibleOrganizations (IDENTITY-W8, returns only a plain organizationId/role list, never a TrustedOrganizationContext)', () => {
   const ctx = setup();
   const publicMembers = Object.getOwnPropertyNames(Object.getPrototypeOf(ctx.service)).filter((name) => name !== 'constructor');
-  assert.deepEqual(publicMembers, ['resolveTrustedContext'], 'no bypass method may exist on the authorization boundary');
+  assert.deepEqual(
+    publicMembers.sort(),
+    ['listEligibleOrganizations', 'resolveTrustedContext'],
+    'no bypass method may exist on the authorization boundary — #resolveActiveIdentity is a true JS private field and must not appear here',
+  );
 });

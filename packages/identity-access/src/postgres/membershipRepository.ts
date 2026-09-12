@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { DuplicateEntityError, UnknownIdentityError } from '../errors.js';
 import type { CreateMembershipInput, MembershipRepository } from '../membershipRepository.js';
 import type { ApproverRole, MembershipStatus, OrganizationMembership, OrganizationRole } from '../types.js';
-import { pgErrorCode, withOrganizationContext, type Database } from './client.js';
+import { pgErrorCode, withIdentityContext, withOrganizationContext, type Database } from './client.js';
 import { organizationMemberships } from './schema.js';
 
 /** The one RLS-protected table in this package. Every method goes through withOrganizationContext. */
@@ -58,6 +58,17 @@ export class PostgresMembershipRepository implements MembershipRepository {
         .update(organizationMemberships)
         .set(patch)
         .where(and(eq(organizationMemberships.organizationId, organizationId), eq(organizationMemberships.identityId, identityId)));
+    });
+  }
+
+  async listByIdentity(identityId: string): Promise<OrganizationMembership[]> {
+    return withIdentityContext(this.db, identityId, async (tx) => {
+      // The explicit WHERE clause is defense-in-depth alongside the RLS
+      // read policy — the query is correct even if RLS were somehow
+      // misconfigured (same "belt and suspenders" style already used
+      // throughout this codebase).
+      const rows = await tx.select().from(organizationMemberships).where(eq(organizationMemberships.identityId, identityId));
+      return rows.map(toMembership);
     });
   }
 }

@@ -54,6 +54,34 @@ export async function withOrganizationContext<T>(
   });
 }
 
+/**
+ * IDENTITY-W8 — self-discovery read path: sets `app.current_identity_id`
+ * (a NEW, separate session GUC from `app.current_org_id`) for the
+ * duration of one transaction. Used ONLY by
+ * `PostgresMembershipRepository.listByIdentity` — see that method and
+ * drizzle/0004_membership_self_discovery.sql for the RLS policy this
+ * pairs with.
+ *
+ * Security-critical property this function does NOT itself enforce, but
+ * every caller MUST: `identityId` must already be server-verified
+ * (resolved from a verified provider credential via
+ * `AuthorizationService`), never a raw client-supplied value — exactly
+ * the same discipline `withOrganizationContext` already requires of its
+ * own `organizationId` parameter (see that function's own doc comment).
+ *
+ * Never sets `app.current_org_id` — leaving it at whatever this pooled
+ * connection last reset it to (always empty string or unset after any
+ * prior transaction, per the LOCAL-scoping behavior already proven in
+ * IDENTITY-W6's audit-table RLS fix), so the read policy's
+ * organization-scoped OR-branch can never accidentally match here.
+ */
+export async function withIdentityContext<T>(db: Database, identityId: string, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.current_identity_id', ${identityId}, true)`);
+    return fn(tx);
+  });
+}
+
 export interface PgError {
   code?: string;
   constraint?: string;

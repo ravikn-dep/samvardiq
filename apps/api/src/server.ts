@@ -10,6 +10,7 @@ import { classifyError, type MembershipAdministrationDependencies } from '@samva
 import type { ApiConfig } from './config.js';
 import { healthRoute } from './routes/health.js';
 import { goalsRoute, type GoalsRouteDependencies } from './routes/goals.js';
+import { meRoute } from './routes/me.js';
 import { membershipsRoute } from './routes/memberships.js';
 
 export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies;
@@ -129,6 +130,7 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
   healthRoute(app);
   goalsRoute(app, deps);
   membershipsRoute(app, deps);
+  meRoute(app, deps);
 
   return app;
 }

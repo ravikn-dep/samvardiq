@@ -61,6 +61,7 @@ Future founders, engineers, designers, AI Executives, and contributors should be
 | ARCH-015 | Transactional Persistence Architecture (PostgreSQL / Supabase / Drizzle) | Approved |
 | ARCH-016 | Authentication and Trusted Organization Access Architecture | Approved |
 | ARCH-017 | HTTP Server and Routing Architecture | Approved |
+| ARCH-018 | Web Client Architecture | Approved |
 
 ---
 
@@ -1471,6 +1472,99 @@ preserved in ADR-HTTP-001 and not repeated here.
 If edge/multi-runtime deployment becomes a real requirement, or the
 API surface grows enough to justify NestJS-style module structure —
 see ADR-HTTP-001 "Future Review Triggers."
+
+### Owner
+
+Founder Office
+
+---
+
+## ARCH-018
+
+### Title
+
+Web Client Architecture
+
+### Date
+
+12 September 2026
+
+### Status
+
+Approved
+
+### Category
+
+Architecture
+
+### Decision
+
+Samvardiq adopts React + Vite as its web client architecture — a
+client-only single-page app in a new `apps/web` package, with no
+server runtime of its own, consuming `apps/api` over HTTP only. The
+client never imports from `packages/identity-access`,
+`packages/application-services`, or `packages/data-foundation`, never
+talks to PostgreSQL or Supabase's database directly, and never
+constructs, caches, or infers a `TrustedOrganizationContext`-shaped
+object — the browser's Supabase session proves authentication only,
+exactly as ARCH-016 already established for the backend, restated here
+for this new consumer.
+
+### Reasoning
+
+No frontend existed anywhere in this repository before this session —
+a genuine, unmade foundational decision, resolved via the same process
+ADR-HTTP-001 already established for framework selection (compare
+candidates against actual repository state, do not adopt the
+fashionable option). React + Vite was compared against Next.js: every
+one of Next.js's differentiating capabilities (SSR, its own API
+routes, server components) either goes unused (no public/SEO content
+exists behind this authenticated dashboard) or actively conflicts with
+an already-binding rule (a second API-route server would duplicate
+`apps/api`'s job, against ARCH-017's dependency direction and this
+session's own "do not rebuild the auth/authorization boundary"
+instruction). Vue/Svelte/Angular were not scored to a full matrix — no
+existing convention and no requirement React does not already meet.
+Full reasoning, current package versions checked live, and the
+frontend-boundary rules are preserved in ADR-FRONTEND-001 and not
+repeated here.
+
+### Alternatives Considered
+
+- Next.js (rejected — SSR/API-routes/server-components either unused
+  or conflicting with already-binding architecture; noted as the
+  future re-review candidate if a genuine public/SEO surface emerges)
+- Vue / Svelte / Angular (not scored to the full matrix — no existing
+  convention, no unmet requirement)
+
+### Expected Benefits
+
+- Zero server runtime to deploy/patch for the frontend; a Vite
+  production build is static files, deployable to any host/CDN
+  independent of `apps/api`'s own deployment (extends ARCH-017's
+  portability stance).
+- No second place business/authorization logic could accidentally be
+  reimplemented — the client has no server layer of its own to put it in.
+- Vitest + Testing Library pairs directly with Vite's own build
+  pipeline — no second bundler configuration to maintain for tests.
+
+### Potential Risks
+
+- If a future public/SEO-relevant surface is needed (e.g. a marketing
+  site), a client-only SPA cannot serve it well — mitigated by scoping
+  that as a future, separate re-review (Next.js or a dedicated tool),
+  not a reason to migrate the authenticated dashboard now.
+
+### Impact
+
+- New `apps/web` package (React + Vite SPA: login, organization
+  selector, minimal protected dashboard shell)
+- No backend package requires any code change to support this client
+
+### Review Date
+
+If a genuine SSR/public-content requirement emerges — see
+ADR-FRONTEND-001 "Future Review Triggers."
 
 ### Owner
 
