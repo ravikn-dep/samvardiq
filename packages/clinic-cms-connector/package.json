@@ -1,0 +1,29 @@
+{
+  "name": "@samvardiq/clinic-cms-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Governed connector to the Clinic CMS external API (CLINIC-W1B-2). Owns the CMS-specific HTTP/HMAC client, normalized DTOs, response validation, error normalization, and the organization-scoped connection configuration this connector reads. Does not own Samvardiq authentication, membership, TrustedOrganizationContext creation, or any frontend/clinical logic.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test --test-concurrency=1 \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test",
+    "db:generate": "drizzle-kit generate"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "embedded-postgres": "18.4.0-beta.17",
+    "eslint": "^9.15.0",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}

@@ -7,7 +7,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build:deps": "npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance && npm run build --prefix ../data-foundation && npm run build --prefix ../identity-access",
+    "build:deps": "npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance && npm run build --prefix ../data-foundation && npm run build --prefix ../identity-access && npm run build --prefix ../clinic-cms-connector",
     "pretypecheck": "npm run build:deps",
     "typecheck": "tsc -p tsconfig.json",
     "prebuild": "npm run build:deps",
@@ -18,6 +18,7 @@
     "lint": "eslint src test"
   },
   "devDependencies": {
+    "@samvardiq/clinic-cms-connector": "file:../clinic-cms-connector",
     "@samvardiq/data-foundation": "file:../data-foundation",
     "@samvardiq/identity-access": "file:../identity-access",
     "@types/node": "^22.10.0",

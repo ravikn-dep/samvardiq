@@ -5,15 +5,16 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 
-import { classifyError, type MembershipAdministrationDependencies } from '@samvardiq/application-services';
+import { classifyClinicOperationsError, classifyError, type MembershipAdministrationDependencies } from '@samvardiq/application-services';
 
 import type { ApiConfig } from './config.js';
 import { healthRoute } from './routes/health.js';
+import { clinicRoute, type ClinicRouteDependencies } from './routes/clinic.js';
 import { goalsRoute, type GoalsRouteDependencies } from './routes/goals.js';
 import { meRoute } from './routes/me.js';
 import { membershipsRoute } from './routes/memberships.js';
 
-export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies;
+export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies & ClinicRouteDependencies;
 
 /**
  * Composition-root server builder (section 33/17). Takes already-constructed
@@ -120,17 +121,29 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
       return;
     }
     const classified = classifyError(error);
-    if (classified.errorClass === 'INTERNAL') {
-      // Full error only ever reaches the server-side log, never the client response.
-      request.log.error({ err: error }, 'unhandled error');
+    if (classified.errorClass !== 'INTERNAL') {
+      reply.code(classified.httpStatus).send({ error: classified.message });
+      return;
     }
-    reply.code(classified.httpStatus).send({ error: classified.message });
+    // classifyError has no branch for connector-layer failures (a Samvardiq
+    // clinic-connection problem, never the calling user's fault) — tried as
+    // a fallback, never the first classifier, so identity/organization
+    // errors are never accidentally reclassified as upstream-unavailable.
+    const clinicClassified = classifyClinicOperationsError(error);
+    if (clinicClassified.errorClass !== 'INTERNAL') {
+      reply.code(clinicClassified.httpStatus).send({ error: clinicClassified.message });
+      return;
+    }
+    // Full error only ever reaches the server-side log, never the client response.
+    request.log.error({ err: error }, 'unhandled error');
+    reply.code(500).send({ error: 'Internal server error.' });
   });
 
   healthRoute(app);
   goalsRoute(app, deps);
   membershipsRoute(app, deps);
   meRoute(app, deps);
+  clinicRoute(app, deps);
 
   return app;
 }

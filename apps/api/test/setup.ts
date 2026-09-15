@@ -14,6 +14,7 @@ import {
 import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist/providers/index.js';
 import type { MembershipStatus, PrincipalType } from '@samvardiq/identity-access';
 import { InMemoryGoalRepository, InMemoryOrganizationRepository } from '@samvardiq/data-foundation';
+import { EnvConnectorSecretProvider, InMemoryClinicCmsConnectionRepository, InMemoryConnectorAuditRepository } from '@samvardiq/clinic-cms-connector';
 import { GoalReadService } from '@samvardiq/application-services';
 import type { PostgresMembershipAdministrationService } from '@samvardiq/identity-access/dist/postgres/index.js';
 
@@ -69,6 +70,8 @@ export interface TestWorld {
   goals: InMemoryGoalRepository;
   authz: AuthorizationService;
   goalReadService: GoalReadService;
+  clinicConnections: InMemoryClinicCmsConnectionRepository;
+  clinicConnectorAudit: InMemoryConnectorAuditRepository;
 }
 
 export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, options: BuildServerOptions = {}): Promise<TestWorld> {
@@ -81,15 +84,18 @@ export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, optio
   const goalReadService = new GoalReadService(goals);
   const issuer = await createTestIssuer();
   const identityProvider = new SupabaseIdentityProviderAdapter({ projectUrl: issuer.projectUrl, jwksOptions: issuer.jwksOptions });
+  const clinicConnections = new InMemoryClinicCmsConnectionRepository();
+  const clinicConnectorAudit = new InMemoryConnectorAuditRepository();
+  const clinicSecrets = new EnvConnectorSecretProvider();
 
   const app = await buildServer(
-    { identityProvider, authz, organizations, goalReadService, membershipAdmin: unusedMembershipAdminStub() },
+    { identityProvider, authz, organizations, goalReadService, membershipAdmin: unusedMembershipAdminStub(), clinicConnections, clinicConnectorAudit, clinicSecrets },
     defaultTestConfig(configOverrides),
     options,
   );
   await app.ready();
 
-  return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService };
+  return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService, clinicConnections, clinicConnectorAudit };
 }
 
 /** Builds a second app instance over the SAME in-memory world but with an overridden identityProvider/goalReadService (e.g. a simulated provider outage, or a spy service). */
@@ -106,6 +112,9 @@ export async function buildAppVariant(
       organizations: world.organizations,
       goalReadService: overrides.goalReadService ?? world.goalReadService,
       membershipAdmin: unusedMembershipAdminStub(),
+      clinicConnections: world.clinicConnections,
+      clinicConnectorAudit: world.clinicConnectorAudit,
+      clinicSecrets: new EnvConnectorSecretProvider(),
     },
     defaultTestConfig(configOverrides),
     options,

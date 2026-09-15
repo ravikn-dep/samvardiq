@@ -12,6 +12,12 @@ import {
   PostgresOrganizationRepository,
   PostgresGoalRepository,
 } from '@samvardiq/data-foundation/dist/postgres/index.js';
+import {
+  createPostgresClient as createClinicConnectorClient,
+  PostgresClinicCmsConnectionRepository,
+  PostgresConnectorAuditRepository,
+} from '@samvardiq/clinic-cms-connector/dist/postgres/index.js';
+import { EnvConnectorSecretProvider } from '@samvardiq/clinic-cms-connector';
 import { GoalReadService } from '@samvardiq/application-services';
 
 import { loadConfigFromEnv } from './config.js';
@@ -31,6 +37,7 @@ async function main(): Promise<void> {
 
   const identityClient = createIdentityClient();
   const dataFoundationClient = createDataFoundationClient();
+  const clinicConnectorClient = createClinicConnectorClient();
 
   const identities = new PostgresIdentityRepository(identityClient.db);
   const providerLinks = new PostgresIdentityProviderLinkRepository(identityClient.db);
@@ -44,7 +51,16 @@ async function main(): Promise<void> {
 
   const identityProvider = new SupabaseIdentityProviderAdapter(loadSupabaseConfigFromEnv());
 
-  const app = await buildServer({ identityProvider, authz, organizations, goalReadService, membershipAdmin }, config);
+  const clinicConnections = new PostgresClinicCmsConnectionRepository(clinicConnectorClient.db);
+  const clinicConnectorAudit = new PostgresConnectorAuditRepository(clinicConnectorClient.db);
+  // Production secret-store selection is explicitly deferred (CLINIC-W1B status
+  // audit, section 12) — env-backed resolution is the interim implementation.
+  const clinicSecrets = new EnvConnectorSecretProvider();
+
+  const app = await buildServer(
+    { identityProvider, authz, organizations, goalReadService, membershipAdmin, clinicConnections, clinicConnectorAudit, clinicSecrets },
+    config,
+  );
 
   // Section 31: stop accepting new connections, let in-flight requests
   // finish (fastify.close()'s own default behavior), then release the
@@ -58,7 +74,7 @@ async function main(): Promise<void> {
     try {
       await app.close();
     } finally {
-      await Promise.allSettled([identityClient.close(), dataFoundationClient.close()]);
+      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close()]);
     }
     process.exit(0);
   }

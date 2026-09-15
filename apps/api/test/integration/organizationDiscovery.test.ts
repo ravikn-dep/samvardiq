@@ -10,6 +10,7 @@ import {
 } from '@samvardiq/identity-access/dist/postgres/index.js';
 import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist/providers/index.js';
 import { PostgresGoalRepository, PostgresOrganizationRepository } from '@samvardiq/data-foundation/dist/postgres/index.js';
+import { EnvConnectorSecretProvider, InMemoryClinicCmsConnectionRepository } from '@samvardiq/clinic-cms-connector';
 import { GoalReadService } from '@samvardiq/application-services';
 
 import { buildServer } from '../../src/server.js';
@@ -46,7 +47,10 @@ before(async () => {
   const goalReadService = new GoalReadService(goals);
   const membershipAdmin = new PostgresMembershipAdministrationService(harness.identityApp.db, identities);
 
-  app = await buildServer({ identityProvider, authz, organizations, goalReadService, membershipAdmin }, defaultTestConfig());
+  app = await buildServer(
+    { identityProvider, authz, organizations, goalReadService, membershipAdmin, clinicConnections: new InMemoryClinicCmsConnectionRepository(), clinicSecrets: new EnvConnectorSecretProvider() },
+    defaultTestConfig(),
+  );
   await app.ready();
 });
 
