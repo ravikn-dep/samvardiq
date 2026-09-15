@@ -62,6 +62,7 @@ Future founders, engineers, designers, AI Executives, and contributors should be
 | ARCH-016 | Authentication and Trusted Organization Access Architecture | Approved |
 | ARCH-017 | HTTP Server and Routing Architecture | Approved |
 | ARCH-018 | Web Client Architecture | Approved |
+| ARCH-019 | Non-Human (Service Principal) Authority for Automated Communication Workflows | Approved |
 
 ---
 
@@ -1565,6 +1566,118 @@ repeated here.
 
 If a genuine SSR/public-content requirement emerges — see
 ADR-FRONTEND-001 "Future Review Triggers."
+
+### Owner
+
+Founder Office
+
+---
+
+## ARCH-019
+
+### Title
+
+Non-Human (Service Principal) Authority for Automated Communication Workflows
+
+### Date
+
+15 September 2026
+
+### Status
+
+Approved
+
+### Category
+
+Architecture
+
+### Decision
+
+Automated, provider-verified communication events (starting with WhatsApp
+via CLINIC-W2) execute under an explicit, organization-scoped
+`principalType: 'service'` identity, provisioned once per clinic/channel
+through an operator-only path, holding an ordinary `organization_memberships`
+row (`role: 'MEMBER'`, `approverRole: null`) exactly like a human membership.
+A new, narrow `ChannelEventVerifier` verifies the provider's webhook HMAC
+signature and produces a `VerifiedPrincipal` for that pre-provisioned
+identity — mirroring how `SupabaseIdentityProviderAdapter` produces one from
+a JWT — which is then resolved through the existing, completely unmodified
+`AuthorizationService.resolveTrustedContext()`. No new authorization
+mechanism, no new table, and no change to `identity-access` or
+`application-services` were introduced.
+
+### Reasoning
+
+`ADR-IDENTITY-001` (`ARCH-016`) already established `principalType: 'human'
+| 'service'` and reserved this exact ground ("prepares the ground... for a
+future Clinic CMS connector... no credential material, rotation mechanism,
+or actual connector is built or specified here") but never built a concrete
+mechanism. CLINIC-W2's `AppointmentOrchestrator` needed one: its target
+handlers (`application-services/clinicOperationsHandler.ts`, CLINIC-W1B)
+authenticate exclusively via a human Supabase-session-derived
+`TrustedOrganizationContext`, and a WhatsApp webhook has no such session.
+Verified from source before deciding: `AuthorizationService.resolveTrustedContext()`
+is already provider-agnostic, already re-derives membership fresh on every
+call, and already strips `approverRole` from any non-human principal
+regardless of what a membership row says. `canAdministerMembership()`
+(IDENTITY-W7) already requires `principalType === 'human'` for every one of
+the six membership-administration mutations, confirmed by reading
+`membershipAdministrationService.ts` directly (not assumed) — so an earlier
+draft of this ADR's own proposed additional guard was found redundant during
+final review and removed before approval. The alternative of building the
+`ServicePrincipalScope` table `ADR-IDENTITY-001` had sketched was evaluated
+and rejected: it would require a second, competing authorization code path
+for no benefit this use case needs, which the codebase's HTTP framework
+decision (`ARCH-017`) already treats as a hard anti-pattern elsewhere.
+
+### Alternatives Considered
+
+- A dedicated `ServicePrincipalScope` table, separate from
+  `organization_memberships` (rejected — requires new schema, new RLS, and
+  a second authorization code path for no requirement this use case has)
+- Forging a synthetic human `TrustedOrganizationContext` to reuse
+  human-only handlers directly (rejected outright by the Founder's approved
+  principle — a provider-verified event must never impersonate a human)
+
+### Expected Benefits
+
+- Zero new authorization mechanism — every claim about correctness reuses
+  already-shipped, already-tested `identity-access` code.
+- Revocation reuses existing, tested lifecycle tooling
+  (`suspendMembership`/`revokeMembership`, identity status) — takes effect
+  on the very next inbound event, matching `ADR-IDENTITY-001`'s existing
+  freshness guarantee.
+- Establishes a channel-agnostic pattern: a future second automated
+  channel (SMS, Gmail) reuses the identical `ChannelEventVerifier` +
+  service-identity shape, not a bespoke mechanism per channel.
+
+### Potential Risks
+
+- Using `organization_memberships.role: 'MEMBER'` for a service identity
+  is a slight semantic overload of a field designed to express human access
+  levels — mitigated by the orchestrator's procedural narrowness (it only
+  ever calls specific, allow-listed clinic-operation handlers) and by
+  `canAdministerMembership()`'s independent, already-existing
+  `principalType` check.
+- `packages/clinic-cms-connector`'s connector-execution-evidence records
+  currently carry no actor/principal attribution field — a narrow,
+  additive gap identified during this decision's own review, tracked as a
+  required CLINIC-W2B follow-up, not a defect in this authority mechanism
+  itself (which remains fully attributable via
+  `identityAuditEvents.actorPrincipalType`).
+
+### Impact
+
+- New (CLINIC-W2B, not yet built): `ChannelEventVerifier`, operator-only
+  service-identity provisioning tooling, `CommunicationChannelRepository`.
+- No changes to `packages/identity-access`, `packages/application-services`,
+  or `packages/clinic-cms-connector`.
+
+### Review Date
+
+If a genuinely different service-access model is needed later (e.g.
+time-boxed grants, purpose-based multi-scope principals), revisit the
+`ServicePrincipalScope` alternative then — not before.
 
 ### Owner
 
