@@ -1,0 +1,37 @@
+{
+  "name": "@samvardiq/communication-orchestration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Governed WhatsApp appointment-booking orchestration (CLINIC-W2B). Owns communication-channel/conversation persistence, the Meta webhook adapter, the provider-neutral AI interpretation boundary, and the deterministic booking state machine. Does not own Samvardiq authentication (see ADR-IDENTITY-002) or any W1B clinic-CMS logic (reused, never duplicated).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build:deps": "npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance && npm run build --prefix ../data-foundation && npm run build --prefix ../identity-access && npm run build --prefix ../clinic-cms-connector && npm run build --prefix ../application-services",
+    "pretypecheck": "npm run build:deps",
+    "typecheck": "tsc -p tsconfig.json",
+    "prebuild": "npm run build:deps",
+    "build": "tsc -p tsconfig.build.json",
+    "pretest": "npm run build:deps",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test --test-concurrency=1 \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test",
+    "db:generate": "drizzle-kit generate"
+  },
+  "devDependencies": {
+    "@samvardiq/application-services": "file:../application-services",
+    "@samvardiq/clinic-cms-connector": "file:../clinic-cms-connector",
+    "@samvardiq/data-foundation": "file:../data-foundation",
+    "@samvardiq/identity-access": "file:../identity-access",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "embedded-postgres": "18.4.0-beta.17",
+    "eslint": "^9.15.0",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}

@@ -13,10 +13,19 @@ import {
 } from '@samvardiq/identity-access';
 import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist/providers/index.js';
 import type { MembershipStatus, PrincipalType } from '@samvardiq/identity-access';
-import { InMemoryGoalRepository, InMemoryOrganizationRepository } from '@samvardiq/data-foundation';
+import { InMemoryGoalRepository, InMemoryOrganizationRepository, type OrganizationRepository } from '@samvardiq/data-foundation';
 import { EnvConnectorSecretProvider, InMemoryClinicCmsConnectionRepository, InMemoryConnectorAuditRepository } from '@samvardiq/clinic-cms-connector';
 import { GoalReadService } from '@samvardiq/application-services';
 import type { PostgresMembershipAdministrationService } from '@samvardiq/identity-access/dist/postgres/index.js';
+import {
+  DeterministicCommunicationInterpreter,
+  InMemoryCommunicationChannelRepository,
+  InMemoryConversationRepository,
+  InMemoryMessageContentRepository,
+  InMemoryMessageRepository,
+  InMemoryWebhookEventDedupRepository,
+  type CommunicationProvider,
+} from '@samvardiq/communication-orchestration';
 
 import { buildServer, type BuildServerOptions } from '../src/server.js';
 import type { ApiConfig } from '../src/config.js';
@@ -72,6 +81,56 @@ export interface TestWorld {
   goalReadService: GoalReadService;
   clinicConnections: InMemoryClinicCmsConnectionRepository;
   clinicConnectorAudit: InMemoryConnectorAuditRepository;
+  channels: InMemoryCommunicationChannelRepository;
+}
+
+/**
+ * A non-network outbound provider double for THIS file's fixtures — the
+ * real `WhatsAppCloudProvider`'s actual HTTP request shape is already
+ * exhaustively proven in `communication-orchestration`'s own
+ * `communicationProvider.test.ts`; these apps/api-level tests exercise
+ * Fastify plumbing (the route/webhook boundary), not outbound HTTP
+ * behavior, and must never attempt a real network call to Meta.
+ */
+class FakeCommunicationProvider implements CommunicationProvider {
+  async sendSessionMessage() {
+    return { externalMessageId: 'wamid.test-out' };
+  }
+  async sendTemplateMessage() {
+    return { externalMessageId: 'wamid.test-out' };
+  }
+}
+
+/** CLINIC-W2B: the goals/health/security/config/membership test suites in this file (and the real-Postgres integration suites, which reuse this) never exercise the WhatsApp webhook route — built once here purely to satisfy `buildServer`'s dependency type. */
+export function commsDeps(shared: {
+  authz: AuthorizationService;
+  organizations: OrganizationRepository;
+  clinicConnections: InMemoryClinicCmsConnectionRepository;
+  clinicConnectorAudit: InMemoryConnectorAuditRepository;
+  channels: InMemoryCommunicationChannelRepository;
+}) {
+  const clinicSecrets = new EnvConnectorSecretProvider();
+  return {
+    channels: shared.channels,
+    appSecrets: new EnvConnectorSecretProvider({ META_APP_SECRET: 'test-only-app-secret-at-least-32-chars' }),
+    platformAppSecretReference: 'env:META_APP_SECRET',
+    dedup: new InMemoryWebhookEventDedupRepository(),
+    clinicDeps: {
+      identityProvider: undefined as never,
+      authz: shared.authz,
+      organizations: shared.organizations,
+      clinicConnections: shared.clinicConnections,
+      clinicConnectorAudit: shared.clinicConnectorAudit,
+      clinicSecrets,
+    },
+    conversations: new InMemoryConversationRepository(),
+    messages: new InMemoryMessageRepository(),
+    messageContent: new InMemoryMessageContentRepository(),
+    interpreter: new DeterministicCommunicationInterpreter(),
+    provider: new FakeCommunicationProvider(),
+    accessTokenSecrets: new EnvConnectorSecretProvider({ TOKEN: 'test-only-access-token-value' }),
+    metaWebhookVerifyToken: 'test-verify-token',
+  };
 }
 
 export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, options: BuildServerOptions = {}): Promise<TestWorld> {
@@ -87,15 +146,26 @@ export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, optio
   const clinicConnections = new InMemoryClinicCmsConnectionRepository();
   const clinicConnectorAudit = new InMemoryConnectorAuditRepository();
   const clinicSecrets = new EnvConnectorSecretProvider();
+  const channels = new InMemoryCommunicationChannelRepository();
 
   const app = await buildServer(
-    { identityProvider, authz, organizations, goalReadService, membershipAdmin: unusedMembershipAdminStub(), clinicConnections, clinicConnectorAudit, clinicSecrets },
+    {
+      identityProvider,
+      authz,
+      organizations,
+      goalReadService,
+      membershipAdmin: unusedMembershipAdminStub(),
+      clinicConnections,
+      clinicConnectorAudit,
+      clinicSecrets,
+      ...commsDeps({ authz, organizations, clinicConnections, clinicConnectorAudit, channels }),
+    },
     defaultTestConfig(configOverrides),
     options,
   );
   await app.ready();
 
-  return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService, clinicConnections, clinicConnectorAudit };
+  return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService, clinicConnections, clinicConnectorAudit, channels };
 }
 
 /** Builds a second app instance over the SAME in-memory world but with an overridden identityProvider/goalReadService (e.g. a simulated provider outage, or a spy service). */
@@ -115,6 +185,7 @@ export async function buildAppVariant(
       clinicConnections: world.clinicConnections,
       clinicConnectorAudit: world.clinicConnectorAudit,
       clinicSecrets: new EnvConnectorSecretProvider(),
+      ...commsDeps({ authz: world.authz, organizations: world.organizations, clinicConnections: world.clinicConnections, clinicConnectorAudit: world.clinicConnectorAudit, channels: world.channels }),
     },
     defaultTestConfig(configOverrides),
     options,

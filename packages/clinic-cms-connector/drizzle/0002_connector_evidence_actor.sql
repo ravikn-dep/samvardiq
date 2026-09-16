@@ -1,0 +1,3 @@
+ALTER TABLE "clinic_cms_connector_evidence" ADD COLUMN "actor_identity_id" text;--> statement-breakpoint
+ALTER TABLE "clinic_cms_connector_evidence" ADD COLUMN "actor_principal_type" text;--> statement-breakpoint
+ALTER TABLE "clinic_cms_connector_evidence" ADD CONSTRAINT "clinic_cms_connector_evidence_actor_principal_type_check" CHECK ("clinic_cms_connector_evidence"."actor_principal_type" IS NULL OR "clinic_cms_connector_evidence"."actor_principal_type" IN ('human','service'));

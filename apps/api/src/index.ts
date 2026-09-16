@@ -19,6 +19,15 @@ import {
 } from '@samvardiq/clinic-cms-connector/dist/postgres/index.js';
 import { EnvConnectorSecretProvider } from '@samvardiq/clinic-cms-connector';
 import { GoalReadService } from '@samvardiq/application-services';
+import {
+  createPostgresClient as createCommsClient,
+  PostgresCommunicationChannelRepository,
+  PostgresConversationRepository,
+  PostgresMessageRepository,
+  PostgresMessageContentRepository,
+  PostgresWebhookEventDedupRepository,
+} from '@samvardiq/communication-orchestration/dist/postgres/index.js';
+import { DeterministicCommunicationInterpreter, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
 
 import { loadConfigFromEnv } from './config.js';
 import { buildServer } from './server.js';
@@ -38,6 +47,7 @@ async function main(): Promise<void> {
   const identityClient = createIdentityClient();
   const dataFoundationClient = createDataFoundationClient();
   const clinicConnectorClient = createClinicConnectorClient();
+  const commsClient = createCommsClient();
 
   const identities = new PostgresIdentityRepository(identityClient.db);
   const providerLinks = new PostgresIdentityProviderLinkRepository(identityClient.db);
@@ -57,8 +67,44 @@ async function main(): Promise<void> {
   // audit, section 12) — env-backed resolution is the interim implementation.
   const clinicSecrets = new EnvConnectorSecretProvider();
 
+  // CLINIC-W2B: same interim env-backed secret resolution, reused rather
+  // than inventing a second provider abstraction (ADR-IDENTITY-002).
+  const channels = new PostgresCommunicationChannelRepository(commsClient.db);
+  const conversations = new PostgresConversationRepository(commsClient.db);
+  const messages = new PostgresMessageRepository(commsClient.db);
+  const messageContent = new PostgresMessageContentRepository(commsClient.db);
+  const dedup = new PostgresWebhookEventDedupRepository(commsClient.db);
+  const appSecrets = new EnvConnectorSecretProvider();
+  const accessTokenSecrets = new EnvConnectorSecretProvider();
+  // A single, platform-level App Secret reference — shared across every
+  // channel under this Meta App (see ADR-IDENTITY-002 / channelEventVerifier.ts
+  // for why this is deliberately NOT a per-channel value).
+  const platformAppSecretReference = 'env:META_WHATSAPP_APP_SECRET';
+  const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN ?? '';
+
   const app = await buildServer(
-    { identityProvider, authz, organizations, goalReadService, membershipAdmin, clinicConnections, clinicConnectorAudit, clinicSecrets },
+    {
+      identityProvider,
+      authz,
+      organizations,
+      goalReadService,
+      membershipAdmin,
+      clinicConnections,
+      clinicConnectorAudit,
+      clinicSecrets,
+      channels,
+      appSecrets,
+      platformAppSecretReference,
+      dedup,
+      clinicDeps: { identityProvider, authz, organizations, clinicConnections, clinicConnectorAudit, clinicSecrets },
+      conversations,
+      messages,
+      messageContent,
+      interpreter: new DeterministicCommunicationInterpreter(),
+      provider: new WhatsAppCloudProvider(),
+      accessTokenSecrets,
+      metaWebhookVerifyToken,
+    },
     config,
   );
 
@@ -74,7 +120,7 @@ async function main(): Promise<void> {
     try {
       await app.close();
     } finally {
-      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close()]);
+      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close(), commsClient.close()]);
     }
     process.exit(0);
   }

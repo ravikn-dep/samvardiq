@@ -193,7 +193,13 @@ test('AL: the full authority chain works end to end for the read slice, and evid
   assert.equal(record.outcome, 'SUCCESS');
   assert.equal(record.organizationId, 'org-A');
   assert.equal(record.connectionId, 'conn-1');
-  assert.deepEqual(Object.keys(record).sort(), ['connectionId', 'connectorType', 'correlationId', 'evidenceId', 'externalResourceId', 'externalResourceType', 'occurredAt', 'operation', 'organizationId', 'outcome', 'retryCount', 'safeErrorCategory'].sort());
+  assert.deepEqual(
+    Object.keys(record).sort(),
+    ['actorIdentityId', 'actorPrincipalType', 'connectionId', 'connectorType', 'correlationId', 'evidenceId', 'externalResourceId', 'externalResourceType', 'occurredAt', 'operation', 'organizationId', 'outcome', 'retryCount', 'safeErrorCategory'].sort(),
+  );
+  // CLINIC-W2B / ADR-IDENTITY-002 follow-up: actor attribution is populated from the resolved context, never patient-supplied.
+  assert.equal(record.actorIdentityId, 'id-1');
+  assert.equal(record.actorPrincipalType, 'human');
 });
 
 test('a connector-level failure is recorded as ERROR evidence with only a safe error category, never the raw error/secret', async () => {

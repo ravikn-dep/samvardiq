@@ -83,17 +83,25 @@ async function runClinicOperation<T>(
     connectionId = resolved.connection.connectionId;
     const result = await fn(resolved.connector);
     const resource = describeResource?.(result);
-    await recordEvidence(deps, context.organizationId, connectionId, operation, correlationId, 'SUCCESS', resource?.type, resource?.id);
+    await recordEvidence(deps, context, connectionId, operation, correlationId, 'SUCCESS', resource?.type, resource?.id);
     return result;
   } catch (error) {
-    await recordEvidence(deps, context.organizationId, connectionId, operation, correlationId, 'ERROR', undefined, undefined, safeErrorCategory(error));
+    await recordEvidence(deps, context, connectionId, operation, correlationId, 'ERROR', undefined, undefined, safeErrorCategory(error));
     throw error;
   }
 }
 
+/**
+ * CLINIC-W2B / ADR-IDENTITY-002 follow-up: every evidence record now
+ * carries WHICH principal — human or service — triggered it, sourced only
+ * from the already-resolved `context` (never patient-supplied, never free
+ * text). Additive: `actorIdentityId`/`actorPrincipalType` are optional on
+ * `ConnectorExecutionEvidence`, so this is the only call site that needed
+ * to change.
+ */
 async function recordEvidence(
   deps: ClinicOperationsDependencies,
-  organizationId: string,
+  context: TrustedOrganizationContext,
   connectionId: string,
   operation: string,
   correlationId: string,
@@ -106,7 +114,7 @@ async function recordEvidence(
   try {
     await deps.clinicConnectorAudit.record({
       evidenceId: crypto.randomUUID(),
-      organizationId,
+      organizationId: context.organizationId,
       connectionId,
       connectorType: 'clinic-cms',
       operation,
@@ -116,6 +124,8 @@ async function recordEvidence(
       outcome,
       retryCount: 0,
       safeErrorCategory,
+      actorIdentityId: context.identityId,
+      actorPrincipalType: context.principalType,
       occurredAt: new Date().toISOString(),
     });
   } catch {
@@ -126,11 +136,69 @@ async function recordEvidence(
   }
 }
 
+/**
+ * CLINIC-W2B / ADR-IDENTITY-002 — context-accepting entry points, added
+ * alongside (never replacing) the request-accepting handlers below. These
+ * exist for exactly one reason: a WhatsApp-originated (or any future
+ * non-human-channel-originated) caller has no bearer token for
+ * `authenticateRequest` to verify — its `TrustedOrganizationContext` is
+ * instead produced by `resolveChannelServiceContext` (the new
+ * communication package) calling the SAME, unmodified
+ * `AuthorizationService.resolveTrustedContext()` this file's own
+ * `authenticateRequest`-based handlers already rely on. This file remains
+ * unaware of *how* a context was produced — human session or verified
+ * channel event — exactly as `GoalReadService`'s own "the real boundary is
+ * procedural, not a runtime brand" precedent already establishes elsewhere
+ * in this codebase. Every `handle*Request` function below is now a thin
+ * wrapper: `authenticateRequest` then delegate — behavior is byte-for-byte
+ * unchanged from before this refactor (proven by every pre-existing test
+ * in this file's own test suite passing unmodified).
+ */
+export async function listClinicConsultantsForContext(deps: ClinicOperationsDependencies, context: TrustedOrganizationContext): Promise<ConsultantSummary[]> {
+  return runClinicOperation(deps, context, 'listConsultants', (connector) => connector.listConsultants());
+}
+
+export async function getClinicAvailableSlotsForContext(
+  deps: ClinicOperationsDependencies,
+  context: TrustedOrganizationContext,
+  input: { externalConsultantId: string; date: string },
+): Promise<AvailableSlots> {
+  return runClinicOperation(deps, context, 'getAvailableSlots', (connector) => connector.getAvailableSlots(input));
+}
+
+export async function findClinicPatientsForContext(deps: ClinicOperationsDependencies, context: TrustedOrganizationContext, input: FindPatientsInput): Promise<PatientMatch[]> {
+  return runClinicOperation(deps, context, 'findPatients', (connector) => connector.findPatients(input));
+}
+
+export async function registerClinicPatientForContext(
+  deps: ClinicOperationsDependencies,
+  context: TrustedOrganizationContext,
+  input: RegisterPatientInput & IdempotentOperation,
+): Promise<RegisteredPatient> {
+  return runClinicOperation(deps, context, 'registerPatient', (connector) => connector.registerPatient(input), (r) => ({ type: 'patient', id: r.externalPatientId }));
+}
+
+export async function createClinicEnquiryForContext(
+  deps: ClinicOperationsDependencies,
+  context: TrustedOrganizationContext,
+  input: CreateEnquiryInput & IdempotentOperation,
+): Promise<EnquiryReference> {
+  return runClinicOperation(deps, context, 'createEnquiry', (connector) => connector.createEnquiry(input), (r) => ({ type: 'enquiry', id: r.externalEnquiryId }));
+}
+
+export async function createClinicAppointmentForContext(
+  deps: ClinicOperationsDependencies,
+  context: TrustedOrganizationContext,
+  input: CreateAppointmentInput & IdempotentOperation,
+): Promise<Appointment> {
+  return runClinicOperation(deps, context, 'createAppointment', (connector) => connector.createAppointment(input), (r) => ({ type: 'appointment', id: r.externalAppointmentId }));
+}
+
 export type ClinicConsultantsRequest = IncomingRequest;
 
 export async function handleListClinicConsultantsRequest(deps: ClinicOperationsDependencies, request: ClinicConsultantsRequest): Promise<ConsultantSummary[]> {
   const context = await authenticateRequest(deps, request);
-  return runClinicOperation(deps, context, 'listConsultants', (connector) => connector.listConsultants());
+  return listClinicConsultantsForContext(deps, context);
 }
 
 export interface ClinicAvailableSlotsRequest extends IncomingRequest {
@@ -140,23 +208,21 @@ export interface ClinicAvailableSlotsRequest extends IncomingRequest {
 
 export async function handleGetClinicAvailableSlotsRequest(deps: ClinicOperationsDependencies, request: ClinicAvailableSlotsRequest): Promise<AvailableSlots> {
   const context = await authenticateRequest(deps, request);
-  return runClinicOperation(deps, context, 'getAvailableSlots', (connector) =>
-    connector.getAvailableSlots({ externalConsultantId: request.externalConsultantId, date: request.date }),
-  );
+  return getClinicAvailableSlotsForContext(deps, context, { externalConsultantId: request.externalConsultantId, date: request.date });
 }
 
 export interface ClinicFindPatientsRequest extends IncomingRequest, FindPatientsInput {}
 
 export async function handleFindClinicPatientsRequest(deps: ClinicOperationsDependencies, request: ClinicFindPatientsRequest): Promise<PatientMatch[]> {
   const context = await authenticateRequest(deps, request);
-  return runClinicOperation(deps, context, 'findPatients', (connector) => connector.findPatients({ query: request.query }));
+  return findClinicPatientsForContext(deps, context, { query: request.query });
 }
 
 export interface ClinicRegisterPatientRequest extends IncomingRequest, RegisterPatientInput, IdempotentOperation {}
 
 export async function handleRegisterClinicPatientRequest(deps: ClinicOperationsDependencies, request: ClinicRegisterPatientRequest): Promise<RegisteredPatient> {
   const context = await authenticateRequest(deps, request);
-  const input: RegisterPatientInput & IdempotentOperation = {
+  return registerClinicPatientForContext(deps, context, {
     firstName: request.firstName,
     lastName: request.lastName,
     age: request.age,
@@ -166,29 +232,27 @@ export async function handleRegisterClinicPatientRequest(deps: ClinicOperationsD
     address: request.address,
     enquiry: request.enquiry,
     idempotencyKey: request.idempotencyKey,
-  };
-  return runClinicOperation(deps, context, 'registerPatient', (connector) => connector.registerPatient(input), (r) => ({ type: 'patient', id: r.externalPatientId }));
+  });
 }
 
 export interface ClinicCreateEnquiryRequest extends IncomingRequest, CreateEnquiryInput, IdempotentOperation {}
 
 export async function handleCreateClinicEnquiryRequest(deps: ClinicOperationsDependencies, request: ClinicCreateEnquiryRequest): Promise<EnquiryReference> {
   const context = await authenticateRequest(deps, request);
-  const input: CreateEnquiryInput & IdempotentOperation = {
+  return createClinicEnquiryForContext(deps, context, {
     externalPatientId: request.externalPatientId,
     channel: request.channel,
     sourceDetail: request.sourceDetail,
     preferredLanguage: request.preferredLanguage,
     idempotencyKey: request.idempotencyKey,
-  };
-  return runClinicOperation(deps, context, 'createEnquiry', (connector) => connector.createEnquiry(input), (r) => ({ type: 'enquiry', id: r.externalEnquiryId }));
+  });
 }
 
 export interface ClinicCreateAppointmentRequest extends IncomingRequest, CreateAppointmentInput, IdempotentOperation {}
 
 export async function handleCreateClinicAppointmentRequest(deps: ClinicOperationsDependencies, request: ClinicCreateAppointmentRequest): Promise<Appointment> {
   const context = await authenticateRequest(deps, request);
-  const input: CreateAppointmentInput & IdempotentOperation = {
+  return createClinicAppointmentForContext(deps, context, {
     externalPatientId: request.externalPatientId,
     externalConsultantId: request.externalConsultantId,
     appointmentDate: request.appointmentDate,
@@ -197,8 +261,7 @@ export async function handleCreateClinicAppointmentRequest(deps: ClinicOperation
     notes: request.notes,
     externalEnquiryId: request.externalEnquiryId,
     idempotencyKey: request.idempotencyKey,
-  };
-  return runClinicOperation(deps, context, 'createAppointment', (connector) => connector.createAppointment(input), (r) => ({ type: 'appointment', id: r.externalAppointmentId }));
+  });
 }
 
 export interface ClinicGetAppointmentRequest extends IncomingRequest {

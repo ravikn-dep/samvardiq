@@ -56,10 +56,21 @@ export const clinicCmsConnectorEvidence = pgTable(
     outcome: text('outcome').notNull(),
     retryCount: integer('retry_count').notNull().default(0),
     safeErrorCategory: text('safe_error_category'),
+    // CLINIC-W2B / ADR-IDENTITY-002 follow-up: nullable, additive — existing
+    // W1B rows have neither column populated and remain perfectly valid
+    // (see drizzle/0002_connector_evidence_actor.sql). Never a name/email/
+    // phone; only ever an internal identityId + the enum already enforced
+    // elsewhere in this codebase (identities_principal_type_check).
+    actorIdentityId: text('actor_identity_id'),
+    actorPrincipalType: text('actor_principal_type'),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.organizationId, table.evidenceId] }),
     check('clinic_cms_connector_evidence_outcome_check', sql`${table.outcome} IN ('SUCCESS','DENIED','ERROR')`),
+    check(
+      'clinic_cms_connector_evidence_actor_principal_type_check',
+      sql`${table.actorPrincipalType} IS NULL OR ${table.actorPrincipalType} IN ('human','service')`,
+    ),
   ],
 );

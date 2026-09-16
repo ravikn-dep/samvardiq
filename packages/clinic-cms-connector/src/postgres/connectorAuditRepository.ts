@@ -19,6 +19,8 @@ export class PostgresConnectorAuditRepository implements ConnectorAuditRepositor
         outcome: evidence.outcome,
         retryCount: evidence.retryCount,
         safeErrorCategory: evidence.safeErrorCategory ?? null,
+        actorIdentityId: evidence.actorIdentityId ?? null,
+        actorPrincipalType: evidence.actorPrincipalType ?? null,
       });
     });
   }

@@ -121,6 +121,58 @@ test('connector execution evidence is organization-isolated by real RLS, and no 
   assert.equal((forA.rows[0] as { organization_id: string }).organization_id, 'org-A');
 });
 
+test('BC: connector evidence records the triggering actor for both a human and a service principal (CLINIC-W2B follow-up)', async () => {
+  await auditRepo.record({
+    evidenceId: 'ev-human',
+    organizationId: 'org-A',
+    connectionId: 'conn-A',
+    connectorType: 'clinic-cms',
+    operation: 'listConsultants',
+    correlationId: 'corr-human',
+    outcome: 'SUCCESS',
+    retryCount: 0,
+    actorIdentityId: 'id-human-1',
+    actorPrincipalType: 'human',
+    occurredAt: new Date().toISOString(),
+  });
+  await auditRepo.record({
+    evidenceId: 'ev-service',
+    organizationId: 'org-A',
+    connectionId: 'conn-A',
+    connectorType: 'clinic-cms',
+    operation: 'createAppointment',
+    correlationId: 'corr-service',
+    outcome: 'SUCCESS',
+    retryCount: 0,
+    actorIdentityId: 'id-service-1',
+    actorPrincipalType: 'service',
+    occurredAt: new Date().toISOString(),
+  });
+
+  const rows = await withOrganizationContext(harness.app.db, 'org-A', (tx) => tx.execute(sql`select evidence_id, actor_identity_id, actor_principal_type from clinic_cms_connector_evidence order by evidence_id`));
+  const byId = Object.fromEntries((rows.rows as { evidence_id: string; actor_identity_id: string; actor_principal_type: string }[]).map((r) => [r.evidence_id, r]));
+  assert.equal(byId['ev-human']!.actor_identity_id, 'id-human-1');
+  assert.equal(byId['ev-human']!.actor_principal_type, 'human');
+  assert.equal(byId['ev-service']!.actor_identity_id, 'id-service-1');
+  assert.equal(byId['ev-service']!.actor_principal_type, 'service');
+});
+
+test('a pre-existing W1B-shaped record with no actor fields remains valid (backward-compatible additive columns)', async () => {
+  await auditRepo.record({
+    evidenceId: 'ev-legacy',
+    organizationId: 'org-A',
+    connectionId: 'conn-A',
+    connectorType: 'clinic-cms',
+    operation: 'listConsultants',
+    correlationId: 'corr-legacy',
+    outcome: 'SUCCESS',
+    retryCount: 0,
+    occurredAt: new Date().toISOString(),
+  });
+  const rows = await withOrganizationContext(harness.app.db, 'org-A', (tx) => tx.execute(sql`select actor_identity_id, actor_principal_type from clinic_cms_connector_evidence where evidence_id = 'ev-legacy'`));
+  assert.equal((rows.rows[0] as { actor_identity_id: string | null }).actor_identity_id, null);
+});
+
 test('evidence rows are append-only for the app role: UPDATE/DELETE are rejected by grant', async () => {
   await auditRepo.record({
     evidenceId: 'ev-3',

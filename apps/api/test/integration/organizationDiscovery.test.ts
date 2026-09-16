@@ -10,11 +10,12 @@ import {
 } from '@samvardiq/identity-access/dist/postgres/index.js';
 import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist/providers/index.js';
 import { PostgresGoalRepository, PostgresOrganizationRepository } from '@samvardiq/data-foundation/dist/postgres/index.js';
-import { EnvConnectorSecretProvider, InMemoryClinicCmsConnectionRepository } from '@samvardiq/clinic-cms-connector';
+import { EnvConnectorSecretProvider, InMemoryClinicCmsConnectionRepository, InMemoryConnectorAuditRepository } from '@samvardiq/clinic-cms-connector';
+import { InMemoryCommunicationChannelRepository } from '@samvardiq/communication-orchestration';
 import { GoalReadService } from '@samvardiq/application-services';
 
 import { buildServer } from '../../src/server.js';
-import { defaultTestConfig } from '../setup.js';
+import { commsDeps, defaultTestConfig } from '../setup.js';
 import { createTestIssuer, type TestIssuer } from '../../../../packages/identity-access/test/jwksTestHelper.js';
 import { startHarness, type Harness } from '../../../../packages/application-services/test/integration/harness.js';
 
@@ -48,7 +49,16 @@ before(async () => {
   const membershipAdmin = new PostgresMembershipAdministrationService(harness.identityApp.db, identities);
 
   app = await buildServer(
-    { identityProvider, authz, organizations, goalReadService, membershipAdmin, clinicConnections: new InMemoryClinicCmsConnectionRepository(), clinicSecrets: new EnvConnectorSecretProvider() },
+    {
+      identityProvider,
+      authz,
+      organizations,
+      goalReadService,
+      membershipAdmin,
+      clinicConnections: new InMemoryClinicCmsConnectionRepository(),
+      clinicSecrets: new EnvConnectorSecretProvider(),
+      ...commsDeps({ authz, organizations, clinicConnections: new InMemoryClinicCmsConnectionRepository(), clinicConnectorAudit: new InMemoryConnectorAuditRepository(), channels: new InMemoryCommunicationChannelRepository() }),
+    },
     defaultTestConfig(),
   );
   await app.ready();

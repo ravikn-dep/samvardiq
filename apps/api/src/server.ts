@@ -13,8 +13,9 @@ import { clinicRoute, type ClinicRouteDependencies } from './routes/clinic.js';
 import { goalsRoute, type GoalsRouteDependencies } from './routes/goals.js';
 import { meRoute } from './routes/me.js';
 import { membershipsRoute } from './routes/memberships.js';
+import { whatsappWebhookRoute, type WhatsAppWebhookRouteDependencies } from './routes/whatsappWebhook.js';
 
-export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies & ClinicRouteDependencies;
+export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies & ClinicRouteDependencies & WhatsAppWebhookRouteDependencies;
 
 /**
  * Composition-root server builder (section 33/17). Takes already-constructed
@@ -144,6 +145,7 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
   membershipsRoute(app, deps);
   meRoute(app, deps);
   clinicRoute(app, deps);
+  whatsappWebhookRoute(app, deps);
 
   return app;
 }
