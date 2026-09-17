@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import EmbeddedPostgres from 'embedded-postgres';
 
 import { createPostgresClient, runMigrations, type PostgresClient } from '../../src/postgres/client.js';
+import { stopEmbeddedPostgres } from './pgTeardown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_FOLDER = path.resolve(__dirname, '../../drizzle');
@@ -53,7 +54,7 @@ export async function startHarness(port: number): Promise<Harness> {
   async function stop(): Promise<void> {
     await app.close();
     await owner.close();
-    await pg.stop();
+    await stopEmbeddedPostgres(pg, dataDir);
   }
 
   return { owner, app, truncateAll, stop };

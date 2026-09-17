@@ -8,6 +8,7 @@ import { after, test } from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
 import { createPostgresClient, runMigrations } from '../../src/postgres/client.js';
+import { stopEmbeddedPostgres } from './pgTeardown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRIZZLE_DIR = path.resolve(__dirname, '../../drizzle');
@@ -28,7 +29,7 @@ test('CLINIC-W2B: upgrade migration from the canonical W1B-2 schema (0000-0001) 
   const client = createPostgresClient({ connectionString });
   t.after(async () => {
     await client.close();
-    await pg.stop();
+    await stopEmbeddedPostgres(pg, dataDir);
   });
 
   // Step 1: apply ONLY the canonical W1B-2 migrations (0000-0001).

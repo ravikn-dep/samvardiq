@@ -10,6 +10,7 @@ import { sql } from 'drizzle-orm';
 import EmbeddedPostgres from 'embedded-postgres';
 
 import { createPostgresClient, runMigrations } from '../../src/postgres/client.js';
+import { stopEmbeddedPostgres } from './pgTeardown.js';
 
 /** AP, AQ, AR — migration validation (section 37). Both paths against real, disposable PostgreSQL; neither ever touches a production database. */
 
@@ -33,7 +34,7 @@ test('AP: migration from empty succeeds, and is idempotent when the full chain i
   // guarantees that ordering regardless of node:test's after-hook order.
   t.after(async () => {
     await client.close();
-    await pg.stop();
+    await stopEmbeddedPostgres(pg, dataDir);
   });
 
   await runMigrations(client.db, DRIZZLE_DIR);
@@ -65,7 +66,7 @@ test('AQ: upgrade migration from the canonical W5 schema succeeds and preserves 
   const client = createPostgresClient({ connectionString });
   t.after(async () => {
     await client.close();
-    await pg.stop();
+    await stopEmbeddedPostgres(pg, dataDir);
   });
 
   // Step 1: apply ONLY the canonical W5 migrations (0000, 0001) from a filtered copy of the migrations folder.
@@ -127,7 +128,7 @@ test('AR: the upgrade migration does not corrupt or weaken canonical W5 RLS on o
   const client = createPostgresClient({ connectionString: `postgres://postgres:postgres@localhost:${port}/w6_migration_rls_check` });
   t.after(async () => {
     await client.close();
-    await pg.stop();
+    await stopEmbeddedPostgres(pg, dataDir);
   });
   await runMigrations(client.db, DRIZZLE_DIR);
 
@@ -155,7 +156,7 @@ test('IDENTITY-W8: upgrade migration from the canonical W7 schema (0000-0003) su
   const client = createPostgresClient({ connectionString });
   t.after(async () => {
     await client.close();
-    await pg.stop();
+    await stopEmbeddedPostgres(pg, dataDir);
   });
 
   // Step 1: apply ONLY the canonical W7 migrations (0000-0003).
