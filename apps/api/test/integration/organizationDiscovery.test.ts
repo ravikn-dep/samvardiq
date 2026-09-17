@@ -11,7 +11,7 @@ import {
 import { SupabaseIdentityProviderAdapter } from '@samvardiq/identity-access/dist/providers/index.js';
 import { PostgresGoalRepository, PostgresOrganizationRepository } from '@samvardiq/data-foundation/dist/postgres/index.js';
 import { EnvConnectorSecretProvider, InMemoryClinicCmsConnectionRepository, InMemoryConnectorAuditRepository } from '@samvardiq/clinic-cms-connector';
-import { InMemoryCommunicationChannelRepository } from '@samvardiq/communication-orchestration';
+import { InMemoryCommunicationChannelRepository, InMemoryConversationRepository } from '@samvardiq/communication-orchestration';
 import { GoalReadService } from '@samvardiq/application-services';
 
 import { buildServer } from '../../src/server.js';
@@ -57,7 +57,7 @@ before(async () => {
       membershipAdmin,
       clinicConnections: new InMemoryClinicCmsConnectionRepository(),
       clinicSecrets: new EnvConnectorSecretProvider(),
-      ...commsDeps({ authz, organizations, clinicConnections: new InMemoryClinicCmsConnectionRepository(), clinicConnectorAudit: new InMemoryConnectorAuditRepository(), channels: new InMemoryCommunicationChannelRepository() }),
+      ...commsDeps({ authz, organizations, clinicConnections: new InMemoryClinicCmsConnectionRepository(), clinicConnectorAudit: new InMemoryConnectorAuditRepository(), channels: new InMemoryCommunicationChannelRepository(), conversations: new InMemoryConversationRepository() }),
     },
     defaultTestConfig(),
   );

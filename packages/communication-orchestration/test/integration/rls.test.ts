@@ -159,3 +159,22 @@ test('a conversation update persists booking-state progress and is re-readable',
   const reread = await convRepo.getById('org-A', 'conv-1');
   assert.equal(reread?.activeAppointmentId, 'APT-1');
 });
+
+test('CLINIC-W2C H/AJ: listHumanHandoffs is RLS-scoped — Org A never sees Org B`s handoffs, and vice versa', async () => {
+  await convRepo.create(conversation({ organizationId: 'org-A', conversationId: 'conv-A-handoff', state: 'HUMAN_HANDOFF_REQUESTED', handoffTrigger: 'CMS_UNRECOVERABLE_FAILURE' }));
+  await convRepo.create(conversation({ organizationId: 'org-A', conversationId: 'conv-A-active', state: 'AI_ACTIVE', externalContactId: '910000000001' }));
+  await convRepo.create(conversation({ organizationId: 'org-B', conversationId: 'conv-B-handoff', state: 'HUMAN_HANDOFF_REQUESTED', externalContactId: '910000000002', handoffTrigger: 'LOW_CONFIDENCE' }));
+
+  const pageA = await convRepo.listHumanHandoffs('org-A', { limit: 20 });
+  const pageB = await convRepo.listHumanHandoffs('org-B', { limit: 20 });
+
+  assert.deepEqual(pageA.items.map((c) => c.conversationId), ['conv-A-handoff']);
+  assert.deepEqual(pageB.items.map((c) => c.conversationId), ['conv-B-handoff']);
+});
+
+test('CLINIC-W2C AK: with no organization context set, the underlying handoff rows are invisible (RLS fails closed), independent of the repository method', async () => {
+  await convRepo.create(conversation({ conversationId: 'conv-A-handoff', state: 'HUMAN_HANDOFF_REQUESTED' }));
+  const { eq } = await import('drizzle-orm');
+  const noContext = await harness.app.db.select().from(conversations).where(eq(conversations.state, 'HUMAN_HANDOFF_REQUESTED'));
+  assert.equal(noContext.length, 0, 'no session context means RLS must hide every row');
+});

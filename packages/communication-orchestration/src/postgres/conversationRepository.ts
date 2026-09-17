@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, lt, or } from 'drizzle-orm';
 
-import type { ConversationRepository, MessageRepository } from '../conversationRepository.js';
+import { decodeHandoffCursor, encodeHandoffCursor, type ConversationRepository, type HandoffPage, type ListHumanHandoffsOptions, type MessageRepository } from '../conversationRepository.js';
 import type { CommunicationMessage, Conversation, ConversationState, MessageDirection, MessageType } from '../types.js';
 import { withOrganizationContext, type Database } from './client.js';
 import { communicationMessages, conversations } from './schema.js';
@@ -89,6 +89,28 @@ export class PostgresConversationRepository implements ConversationRepository {
         .where(and(eq(conversations.organizationId, conversation.organizationId), eq(conversations.conversationId, conversation.conversationId)))
         .returning();
       return toConversation(row!);
+    });
+  }
+
+  async listHumanHandoffs(organizationId: string, options: ListHumanHandoffsOptions): Promise<HandoffPage> {
+    const cursor = options.cursor ? decodeHandoffCursor(options.cursor) : undefined;
+    return withOrganizationContext(this.db, organizationId, async (tx) => {
+      const conditions = [eq(conversations.organizationId, organizationId), eq(conversations.state, 'HUMAN_HANDOFF_REQUESTED')];
+      if (cursor) {
+        const cursorDate = new Date(cursor.updatedAt);
+        conditions.push(or(lt(conversations.updatedAt, cursorDate), and(eq(conversations.updatedAt, cursorDate), lt(conversations.conversationId, cursor.conversationId)))!);
+      }
+      const rows = await tx
+        .select()
+        .from(conversations)
+        .where(and(...conditions))
+        .orderBy(desc(conversations.updatedAt), desc(conversations.conversationId))
+        .limit(options.limit + 1);
+
+      const hasMore = rows.length > options.limit;
+      const page = rows.slice(0, options.limit).map(toConversation);
+      const last = page[page.length - 1];
+      return { items: page, nextCursor: hasMore && last ? encodeHandoffCursor({ updatedAt: last.updatedAt, conversationId: last.conversationId }) : undefined };
     });
   }
 }

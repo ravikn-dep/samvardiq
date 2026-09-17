@@ -82,6 +82,7 @@ export interface TestWorld {
   clinicConnections: InMemoryClinicCmsConnectionRepository;
   clinicConnectorAudit: InMemoryConnectorAuditRepository;
   channels: InMemoryCommunicationChannelRepository;
+  conversations: InMemoryConversationRepository;
 }
 
 /**
@@ -108,6 +109,7 @@ export function commsDeps(shared: {
   clinicConnections: InMemoryClinicCmsConnectionRepository;
   clinicConnectorAudit: InMemoryConnectorAuditRepository;
   channels: InMemoryCommunicationChannelRepository;
+  conversations: InMemoryConversationRepository;
 }) {
   const clinicSecrets = new EnvConnectorSecretProvider();
   return {
@@ -123,7 +125,7 @@ export function commsDeps(shared: {
       clinicConnectorAudit: shared.clinicConnectorAudit,
       clinicSecrets,
     },
-    conversations: new InMemoryConversationRepository(),
+    conversations: shared.conversations,
     messages: new InMemoryMessageRepository(),
     messageContent: new InMemoryMessageContentRepository(),
     interpreter: new DeterministicCommunicationInterpreter(),
@@ -147,6 +149,7 @@ export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, optio
   const clinicConnectorAudit = new InMemoryConnectorAuditRepository();
   const clinicSecrets = new EnvConnectorSecretProvider();
   const channels = new InMemoryCommunicationChannelRepository();
+  const conversations = new InMemoryConversationRepository();
 
   const app = await buildServer(
     {
@@ -158,14 +161,14 @@ export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, optio
       clinicConnections,
       clinicConnectorAudit,
       clinicSecrets,
-      ...commsDeps({ authz, organizations, clinicConnections, clinicConnectorAudit, channels }),
+      ...commsDeps({ authz, organizations, clinicConnections, clinicConnectorAudit, channels, conversations }),
     },
     defaultTestConfig(configOverrides),
     options,
   );
   await app.ready();
 
-  return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService, clinicConnections, clinicConnectorAudit, channels };
+  return { app, issuer, identities, providerLinks, memberships, organizations, goals, authz, goalReadService, clinicConnections, clinicConnectorAudit, channels, conversations };
 }
 
 /** Builds a second app instance over the SAME in-memory world but with an overridden identityProvider/goalReadService (e.g. a simulated provider outage, or a spy service). */
@@ -185,7 +188,7 @@ export async function buildAppVariant(
       clinicConnections: world.clinicConnections,
       clinicConnectorAudit: world.clinicConnectorAudit,
       clinicSecrets: new EnvConnectorSecretProvider(),
-      ...commsDeps({ authz: world.authz, organizations: world.organizations, clinicConnections: world.clinicConnections, clinicConnectorAudit: world.clinicConnectorAudit, channels: world.channels }),
+      ...commsDeps({ authz: world.authz, organizations: world.organizations, clinicConnections: world.clinicConnections, clinicConnectorAudit: world.clinicConnectorAudit, channels: world.channels, conversations: world.conversations }),
     },
     defaultTestConfig(configOverrides),
     options,

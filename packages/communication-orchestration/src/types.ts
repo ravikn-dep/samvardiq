@@ -123,6 +123,33 @@ export interface CommunicationMessage {
 }
 
 /**
+ * CLINIC-W2C, section 6/16: the minimized staff-facing projection of a
+ * handed-off Conversation — NOT the persistence row. Deliberately omits
+ * `externalContactId` (the raw WhatsApp contact number/PII, never clearly
+ * authorized for staff-facing exposure by the approved architecture) and
+ * every field that never existed on `Conversation` in the first place
+ * (raw message text, provider payload, signatures, tokens, secrets,
+ * attachments, clinical content). Every field below is either required to
+ * identify/triage the handoff or explicitly named as a justified read
+ * field by the W2C brief (booking/appointment/enquiry reference, safe
+ * patient/CMS reference, language, structured handoff reason).
+ */
+export interface HumanHandoffSummary {
+  readonly conversationId: string;
+  readonly channelId: string;
+  readonly state: ConversationState;
+  readonly handoffTrigger?: HandoffTrigger;
+  readonly handoffAt?: string;
+  readonly bookingState: BookingState;
+  readonly preferredLanguage: PreferredLanguage;
+  readonly externalPatientId?: string;
+  readonly activeEnquiryId?: string;
+  readonly activeAppointmentId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
  * The ONE table allowed to hold raw patient/clinic message text (section
  * 15/26 of the session brief; §7 of the architecture doc). `purgeAfter` is
  * always set at write time — never an indefinite-retention row.

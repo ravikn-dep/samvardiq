@@ -6,16 +6,22 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 
 import { classifyClinicOperationsError, classifyError, type MembershipAdministrationDependencies } from '@samvardiq/application-services';
+import { classifyCommunicationError } from '@samvardiq/communication-orchestration';
 
 import type { ApiConfig } from './config.js';
 import { healthRoute } from './routes/health.js';
 import { clinicRoute, type ClinicRouteDependencies } from './routes/clinic.js';
 import { goalsRoute, type GoalsRouteDependencies } from './routes/goals.js';
+import { humanHandoffsRoute, type HumanHandoffsRouteDependencies } from './routes/humanHandoffs.js';
 import { meRoute } from './routes/me.js';
 import { membershipsRoute } from './routes/memberships.js';
 import { whatsappWebhookRoute, type WhatsAppWebhookRouteDependencies } from './routes/whatsappWebhook.js';
 
-export type AppDependencies = GoalsRouteDependencies & MembershipAdministrationDependencies & ClinicRouteDependencies & WhatsAppWebhookRouteDependencies;
+export type AppDependencies = GoalsRouteDependencies &
+  MembershipAdministrationDependencies &
+  ClinicRouteDependencies &
+  WhatsAppWebhookRouteDependencies &
+  HumanHandoffsRouteDependencies;
 
 /**
  * Composition-root server builder (section 33/17). Takes already-constructed
@@ -135,6 +141,14 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
       reply.code(clinicClassified.httpStatus).send({ error: clinicClassified.message });
       return;
     }
+    // Same fallback pattern, for communication-orchestration's own error
+    // taxonomy (CLINIC-W2C) — see that package's classifyCommunicationError
+    // doc comment for why it cannot live in classifyError instead.
+    const communicationClassified = classifyCommunicationError(error);
+    if (communicationClassified.errorClass !== 'INTERNAL') {
+      reply.code(communicationClassified.httpStatus).send({ error: communicationClassified.message });
+      return;
+    }
     // Full error only ever reaches the server-side log, never the client response.
     request.log.error({ err: error }, 'unhandled error');
     reply.code(500).send({ error: 'Internal server error.' });
@@ -146,6 +160,7 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
   meRoute(app, deps);
   clinicRoute(app, deps);
   whatsappWebhookRoute(app, deps);
+  humanHandoffsRoute(app, deps);
 
   return app;
 }
