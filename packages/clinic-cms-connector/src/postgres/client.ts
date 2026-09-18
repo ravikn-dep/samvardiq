@@ -20,8 +20,20 @@ export function createPostgresClient(config: PoolConfig = {}): PostgresClient {
   return { db, pool, close: () => pool.end() };
 }
 
+/**
+ * INFRA-W1A: `migrationsSchema` is package-specific rather than drizzle's
+ * shared default (`"drizzle"`) because drizzle's migrator tracks "already
+ * applied" via a single global watermark (the latest `created_at` across
+ * every row in the journal table), not a per-migration hash set — proven
+ * during INFRA-W1A's local preflight that when four packages' migrators
+ * share one journal table, running them in the wrong order silently skips
+ * an entire package's migrations with no error, because an earlier
+ * package's migrations can fall below a later package's watermark. Each
+ * package owning its own journal schema makes that failure mode
+ * structurally impossible, independent of run order.
+ */
 export async function runMigrations(db: Database, migrationsFolder: string): Promise<void> {
-  await migrate(db, { migrationsFolder });
+  await migrate(db, { migrationsFolder, migrationsSchema: 'drizzle_clinic_cms_connector' });
 }
 
 /**
