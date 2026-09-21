@@ -14,8 +14,10 @@
     "pretest": "npm run build:deps",
     "test": "node --import tsx --test \"test/*.test.ts\"",
     "test:integration": "node --import tsx --test --test-concurrency=1 \"test/integration/**/*.test.ts\"",
-    "lint": "eslint src test",
-    "start": "node dist/index.js"
+    "lint": "eslint src test scripts",
+    "start": "node dist/index.js",
+    "premigrate:staging": "npm run build:deps",
+    "migrate:staging": "node --import tsx scripts/migrateSupabaseStaging.ts"
   },
   "devDependencies": {
     "@fastify/cors": "^11.3.0",

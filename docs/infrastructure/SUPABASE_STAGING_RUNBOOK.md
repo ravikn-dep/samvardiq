@@ -1,14 +1,14 @@
 # Supabase Staging Migration Runbook
 
-**STATUS: PREFLIGHT / NOT YET EXECUTED.** Produced by INFRA-W1A (discovery/audit only). No Supabase project has been modified. No secret value appears anywhere in this document.
+**STATUS: EXECUTED ON `samvardiq-staging` (INFRA-W1B, 2026-09-21).** §§1–18 were written by INFRA-W1A (discovery/audit only) and have been corrected where W1B's execution against the real Supabase project disproved them — most importantly §7 (Supabase was **not** free of incompatibilities; see §19, findings F1/F2). §19 is the execution record and verification evidence. No secret value appears anywhere in this document.
 
-**Depends on:** `ADR-DATA-001` (Supabase-managed PostgreSQL approved as hosting, `ARCH` decisions register), `ADR-IDENTITY-001`/`ADR-IDENTITY-002`. Samvardiq checkpoint at time of writing: `3a7d7836e17c2830cb8b0277a1b238e85add0d4b`.
+**Depends on:** `ADR-DATA-001` (Supabase-managed PostgreSQL approved as hosting, `ARCH` decisions register), `ADR-IDENTITY-001`/`ADR-IDENTITY-002`. Samvardiq checkpoint at the start of INFRA-W1B: `7b74bf60baf19019bc1ed25daa1ae2e7aced3f27`.
 
 ---
 
 ## 1. Purpose
 
-Define the exact, safe procedure for applying Samvardiq's four canonical PostgreSQL migration chains to the empty `samvardiq-staging` Supabase project, and the verification gates that must pass before staging is considered usable. This document is the W1B execution guide; W1A performed no remote action.
+Define the exact, safe procedure for applying Samvardiq's four canonical PostgreSQL migration chains to the empty `samvardiq-staging` Supabase project, and the verification gates that must pass before staging is considered usable. This document was the W1B execution guide (W1A performed no remote action); W1B executed it — see §19.
 
 ## 2. Architecture Recap
 
@@ -35,7 +35,7 @@ This was a **pre-existing repository defect in the migration runner**, not a Sup
 
 ## 4. No New ADR / No Architecture Conflict
 
-ADR-DATA-001 already approves Supabase-managed PostgreSQL, already names "some superuser-level Postgres operations are restricted on managed platforms" as an accepted, anticipated weakness, and already commits to vanilla-Postgres portability. Every migration in this repository uses only standard DDL/DCL Supabase's documented `postgres` role supports (`CREATE ROLE`, `GRANT`/`REVOKE`, `ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY`, `CREATE POLICY`, `CREATE FUNCTION`/`CREATE TRIGGER`, standard indexes/constraints). Zero PostgreSQL extensions are required anywhere in this codebase. No new ADR is required for this deployment; the migration-journal-sharing defect above is a repository code-quality/safety issue, not an architectural conflict with Supabase.
+ADR-DATA-001 already approves Supabase-managed PostgreSQL, already names "some superuser-level Postgres operations are restricted on managed platforms" as an accepted, anticipated weakness, and already commits to vanilla-Postgres portability. Every migration in this repository uses only standard DDL/DCL Supabase's documented `postgres` role supports (`CREATE ROLE`, `GRANT`/`REVOKE`, `ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY`, `CREATE POLICY`, `CREATE FUNCTION`/`CREATE TRIGGER`, standard indexes/constraints). Zero PostgreSQL extensions are required anywhere in this codebase. No new ADR is required for this deployment — but note §7/§19: standard DDL/DCL working is **not** the same as Supabase's platform behaviour being neutral; two platform behaviours (F1/F2) needed a hardening step. Neither is an architecture conflict (nor was the migration-journal-sharing defect in §3, a repository code-quality/safety issue).
 
 ## 5. Canonical Migration Dependency Order
 
@@ -71,14 +71,15 @@ No two packages independently assume ownership of the same table, function, trig
 
 ## 7. Supabase Compatibility
 
-- **PostgreSQL version:** no migration uses a version-specific feature; RLS, triggers, jsonb, and `pg_roles` are all available since Postgres 9.5+. Supabase's current default (17/18 generation) is far in excess of any requirement here.
-- **Role creation:** Supabase's provisioned `postgres` connection role is not a true cluster superuser but is documented by Supabase to carry additional privileges specifically so it can run operations normally superuser-only, including `CREATE ROLE`. All four `CREATE ROLE samvardiq_app ... NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION` statements request no privilege Supabase's `postgres` role cannot grant.
-- **Grants/revokes:** every `GRANT`/table-level privilege statement in this repository is standard DCL on ordinary tables the migration-running role itself owns (having just created them) — no cross-schema or Supabase-managed-object grant is attempted.
-- **RLS / FORCE RLS:** standard `ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY` and `CREATE POLICY` — Supabase's own dashboard treats RLS as first-class; no incompatibility.
-- **Functions/triggers:** all 3 functions are plain `LANGUAGE plpgsql`, `SECURITY INVOKER` (the default — none declares `SECURITY DEFINER`), created in `public`. No incompatibility.
-- **Extensions:** none required anywhere in this codebase (UUIDs are generated in application code via `crypto.randomUUID()`, never `gen_random_uuid()`/`uuid-ossp`). Nothing to enable.
-- **Schema assumptions:** every table lives in `public` via plain `pgTable()` — no `pgSchema()` custom schema anywhere. `public` is exactly where Supabase expects user application tables; no conflict with Supabase's own `auth`/`storage`/`realtime` schemas, which this codebase never touches.
-- **Supabase Auth coupling:** none required now, and none should be added. Samvardiq verifies Supabase-issued JWTs against the project's public JWKS endpoint (`SUPABASE_PROJECT_URL`, not a secret) and maintains its own `identities`/`organization_memberships` tables entirely independently of `auth.users`. No foreign key, trigger, or view ever references the `auth` schema. This is deliberate — ADR-IDENTITY-001's identity model doesn't couple to a specific provider's internal schema.
+> **CORRECTION (INFRA-W1B).** The INFRA-W1A version of this section concluded there was no incompatibility. That was **false** for two Supabase-platform behaviours a local vanilla-PostgreSQL proof cannot show (F1, F2 — §19.3). The migrations themselves apply cleanly; the platform's automatic behaviour around them did not match the schema's intent until the hardening step described in §19.3 was added.
+
+- **PostgreSQL version:** staging runs PostgreSQL 17.6. No migration uses a version-specific feature.
+- **Admin role reality (verified):** Supabase's `postgres` connection role is **not** a superuser (`rolsuper = false`) but has `rolcreaterole = true` and **`rolbypassrls = true`**. Every `CREATE ROLE samvardiq_app ... NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION` succeeded. Consequence for §14: RLS can **never** be tested as the admin role — it bypasses RLS. Tenant-isolation proofs must run as `samvardiq_app` (`SET ROLE`, §19.4).
+- **Role membership reality (verified):** `postgres` holds a pre-existing membership in `samvardiq_app` granted by `supabase_admin` with ADMIN OPTION but **without SET**, so `postgres` cannot `SET ROLE samvardiq_app` by default. This edge is platform provisioning and must not be removed (it is what lets `postgres` administer the role, e.g. provision its password later).
+- **Grants/revokes, functions/triggers, FORCE RLS, extensions, schema assumptions:** as in W1A — all applied and verified; no extension needed; all functions `SECURITY INVOKER`; everything lives in `public`; no coupling to `auth`.
+- **Supabase `ensure_rls` event trigger (F1):** every `CREATE TABLE` in `public` is followed by an automatic `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`. The four platform-global tables (§19.3) are deliberately created without RLS, so they became RLS-enabled with **zero policies = deny-all for `samvardiq_app`**.
+- **Supabase default privileges (F2):** `anon`, `authenticated` and `service_role` receive full privileges on every new `public` table/sequence/function, and new functions are additionally executable by PUBLIC.
+- **Supabase Auth coupling:** none required now, and none should be added. Samvardiq verifies Supabase-issued JWTs against the project's public JWKS endpoint (`SUPABASE_PROJECT_URL`, not a secret) and maintains its own `identities`/`organization_memberships` tables entirely independently of `auth.users`. No foreign key, trigger, or view ever references the `auth` schema.
 
 ## 8. Connection Strategy
 
@@ -104,7 +105,7 @@ Existing convention (already established, unchanged by this document):
 - `META_WHATSAPP_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN` — WhatsApp-specific, unrelated to this migration.
 - Per-connection `env:<NAME>` secret references resolved dynamically by `EnvConnectorSecretProvider` (CMS/access-token secrets) — not fixed names.
 
-**Gap found (§3 of the W1A brief):** there is currently no separate variable for an **admin/migration** connection — `DATABASE_URL`'s own `.env.example` value already shows a `samvardiq_app`-scoped example, confirming it was never intended to carry admin credentials. **Recommended new variable (documentation only; not implemented in any file by W1A): `MIGRATION_DATABASE_URL`** — the admin/owner connection string, read only by the migration-runner script W1B will write, kept separate from `DATABASE_URL` at every point. No existing file needs to change to introduce this name; the not-yet-written migration script will read it directly.
+**Gap found (§3 of the W1A brief):** there is currently no separate variable for an **admin/migration** connection — `DATABASE_URL`'s own `.env.example` value already shows a `samvardiq_app`-scoped example, confirming it was never intended to carry admin credentials. **`MIGRATION_DATABASE_URL` (implemented by W1B)** — the admin/owner connection string, read only by `apps/api/scripts/*` (the runner and the verifier), kept separate from `DATABASE_URL` at every point. A second, independent gate `SAMVARDIQ_DEPLOY_ENV=staging` must also be set, and the runner refuses unless the pooler username matches the intended staging project. Neither value is ever printed.
 
 ## 10. Secret Handling
 
@@ -112,52 +113,47 @@ Existing convention (already established, unchanged by this document):
 - No `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, or `SUPABASE_JWT_SECRET` is read anywhere in this codebase — Samvardiq's backend never needs a service-role key; `apps/web` uses only the publishable (anon) key, which Supabase itself documents as safe to ship in a browser bundle.
 - For W1B, the Founder provides `MIGRATION_DATABASE_URL` and (if rotated) `DATABASE_URL`/`SUPABASE_PROJECT_URL` **locally**, via their own shell environment or a local, gitignored `.env` file copied from the relevant `.env.example` — never pasted into a chat/prompt with an AI assistant, consistent with this session's own operating constraint.
 
-## 11. Migration Execution Commands — Do NOT Execute Yet
+## 11. Migration Execution Commands (implemented in W1B)
 
-**No repository-native command to run migrations against a real remote database currently exists.** `runMigrations()` is today only ever called from test harnesses (`packages/*/test/integration/harness.ts`, `packages/*/test/integration/migration.test.ts`), each constructing its own `createPostgresClient({ connectionString })` with an explicit, test-local connection string — never from `process.env.MIGRATION_DATABASE_URL`. No package's `package.json` defines a `migrate`/`db:migrate` script, and `apps/api`'s composition root (`src/index.ts`) never calls `runMigrations` (migrations are correctly kept out of application boot).
+Run from `apps/api/` (the only place in this repository where all four PostgreSQL-owning packages are installed dependencies; there is no root workspace), with `SAMVARDIQ_DEPLOY_ENV=staging` and `MIGRATION_DATABASE_URL` (Session Pooler, port 5432) set in your own shell — never pasted into a chat/prompt:
 
-**W1B's first deliverable is therefore writing a small migration-runner script** (not a repository defect — simply not yet built, since no remote database has existed to run it against until now). It should:
-1. Read `MIGRATION_DATABASE_URL` from the environment (never hardcoded, never logged).
-2. Call each package's own `createPostgresClient({ connectionString: process.env.MIGRATION_DATABASE_URL })` + `runMigrations(client.db, <package>/drizzle)`, in exactly the order in §5.
-3. After all four, run the verification queries in §12 before reporting success.
+| Step | Command | Mutates DB | Notes |
+|---|---|---|---|
+| Migrate + harden | `npm run migrate:staging` (builds the package `dist`s first via `premigrate:staging`) | Yes | Migrates the four packages in the §5 order via each package's own `runMigrations`, then applies the Supabase hardening (§19.3). Safe to re-run — every migration is journal-guarded and the hardening is idempotent. Prints only host/port/database. |
+| Structural verification | `node --import tsx scripts/verifySupabaseStaging.ts structure` | No (catalog SELECTs; drift audit uses a disposable local cluster) | Physical schema, independently recomputed journals, role/grants, triggers, RLS, exposure review, drift vs reference schema. |
+| Behavioural verification | `node --import tsx scripts/verifySupabaseStaging.ts behavior --grant-set-role` | Temporary: a role-membership grant, plus synthetic rows removed before exit | See §19.4. Refuses to run without the explicit flag, and refuses to write anything unless every table is already empty. |
 
-Every command below assumes that script exists as `scripts/migrateSupabaseStaging.ts` (illustrative name; W1B may choose otherwise) run via `npx tsx` from the repository root, with `MIGRATION_DATABASE_URL` set in the invoking shell.
-
-| Step | Working directory | Required env | Mutates DB | Expected objects | Safe to rerun | Failure mode on partial execution |
-|---|---|---|---|---|---|---|
-| Run the script once | repo root | `MIGRATION_DATABASE_URL` | Yes | All 16 tables, `samvardiq_app` role, all RLS/policies/triggers listed in §5 | Yes — every migration is itself idempotent (`IF NOT EXISTS` role guard; each package's own migrator, now independently scoped per §3, skips its own already-applied migrations) | If it fails partway through one package's own migration file, that migration runs inside drizzle's own transaction and rolls back cleanly for that file; other packages' already-completed migrations are unaffected regardless of run order, since §3's fix made each package's journal independent. Simply re-run the script. |
+Failure mode on partial execution is unchanged from §13 / §3: a failing migration file rolls back inside drizzle's own transaction, earlier packages stay applied, each package's journal is independent — simply re-run.
 
 ## 12. Migration Repeatability / Verification Gate
 
-Run these read-only checks against `MIGRATION_DATABASE_URL` (or `DATABASE_URL`) after the migration run, as a straightforward sanity check (no longer a defense against the §3 failure mode, which is now structurally impossible, but still good practice for any deployment step):
+The counts below were the W1A sanity gate and remain correct (verified in §19.2). W1B automates them, and more, in `verifySupabaseStaging.ts structure`, which additionally recomputes each journal row's sha256 and timestamp from the repository's own SQL files (independent of drizzle's migrator).
 
 ```sql
 -- Expect exactly 16
 select count(*) from information_schema.tables where table_schema = 'public';
 
--- Expect exactly 2 in each package's own schema, e.g.:
-select count(*) from drizzle_data_foundation.__drizzle_migrations;      -- 2
-select count(*) from drizzle_identity_access.__drizzle_migrations;      -- 5
-select count(*) from drizzle_clinic_cms_connector.__drizzle_migrations; -- 3
-select count(*) from drizzle_communication_orchestration.__drizzle_migrations; -- 2
+-- Journal row counts per package schema: 2 / 5 / 3 / 2
+select count(*) from drizzle_data_foundation.__drizzle_migrations;
+select count(*) from drizzle_identity_access.__drizzle_migrations;
+select count(*) from drizzle_clinic_cms_connector.__drizzle_migrations;
+select count(*) from drizzle_communication_orchestration.__drizzle_migrations;
 
 -- Expect exactly 1
 select count(*) from pg_roles where rolname = 'samvardiq_app';
 
--- Expect exactly 3
+-- Expect exactly 3 (all enabled)
 select count(*) from pg_trigger where tgname in
   ('approval_requests_goal_consistency','approval_records_immutable','identity_audit_events_immutable');
 ```
-
-If any count is wrong, something in that specific package's migration chain genuinely failed (not a cross-package ordering artifact) — investigate that package's own migration output directly.
 
 ## 13. Partial Failure / Recovery Plan
 
 Because `samvardiq-staging` currently holds no real data, the safest recovery from any failed or partial migration attempt is: **drop and recreate the staging database (or the whole Supabase project) and re-run the full chain from empty.** This is explicitly a staging-only posture — it does not apply once staging carries data anyone depends on, and never applies to a future production project, which will need a real forward-migration/rollback discipline once real data exists.
 
-## 14. Supabase Security Verification Plan (for W1B, against the real project)
+## 14. Supabase Security Verification Plan (EXECUTED — results in §19.4)
 
-- **Runtime role:** `select rolsuper, rolcreatedb, rolcreaterole, rolbypassrls from pg_roles where rolname = 'samvardiq_app'` — expect all four `false`.
+- **Runtime role:** `select rolsuper, rolcreatedb, rolcreaterole, rolbypassrls from pg_roles where rolname = 'samvardiq_app'` — expect all four `false`. (All checks below that concern RLS must run as `samvardiq_app` via `SET ROLE`, never as the admin `postgres`, which has `BYPASSRLS` — §7.)
 - **Tenant isolation:** as `samvardiq_app` with `app.current_org_id` set to Org A, confirm Org B's rows in every RLS-protected table are invisible; confirm INSERT/UPDATE targeting Org B's `organization_id` is rejected; confirm no `app.current_org_id` set means zero rows from any tenant-scoped table.
 - **Approval audit immutability:** attempt `UPDATE`/`DELETE` on `approval_records` as `samvardiq_app` — expect the `approval_records_immutable` trigger to raise, not merely a grant-denied error.
 - **Identity audit immutability:** same, for `identity_audit_events` via `identity_audit_events_immutable`.
@@ -173,7 +169,7 @@ No Supabase Auth configuration is required before or during database migration �
 
 Supabase does not include platform-managed backups on the Free tier; Point-in-Time Recovery is a paid add-on on every tier. For a staging project holding no real data, this is acceptable — see §13's recreate-from-empty posture. Before any production project (real patient data), this must be revisited: at minimum a paid tier with daily backups, and PITR should be evaluated against the actual compliance requirement once defined — not decided in this session.
 
-## 17. Synthetic Staging Dataset (designed here, not inserted)
+## 17. Synthetic Staging Dataset (designed in W1A; W1B used a smaller `w1b-` dataset transiently — §19.4 — and removed it; staging currently holds no data)
 
 | Fixture | Fields | Used for |
 |---|---|---|
@@ -192,3 +188,58 @@ No real patient, phone number, clinic secret, Meta token, CMS credential, or med
 ## 18. Production Prohibition
 
 This document, and the `samvardiq-staging` project it describes, are staging-only. Nothing here authorizes connecting a real WhatsApp Business number, a real Clinic CMS credential, a real AI provider, or real patient data. Production readiness is a separate, later decision requiring its own explicit Founder approval and its own infrastructure review (backup tier, PITR, region, compliance posture).
+
+## 19. INFRA-W1B Execution Record (2026-09-21) — `samvardiq-staging` only
+
+Nothing here touched production, configured Supabase Auth, deployed the API or web app, configured Meta/WhatsApp, connected a live Clinic CMS or an AI provider, or introduced real patient/clinical data.
+
+### 19.1 Target and pre-migration state
+
+- Connection: Supabase **Session Pooler**, `aws-0-ap-northeast-1.pooler.supabase.com:5432`, database `postgres`, PostgreSQL **17.6**. The tenant-suffixed pooler username is checked against the intended staging project by both the runner and the verifier; inside the session Supavisor presents it as plain `postgres`.
+- Admin role `postgres`: `rolsuper = false`, `rolcreaterole = true`, **`rolbypassrls = true`**.
+- Before migration: `public` held no tables and no `samvardiq_app` role existed; no `drizzle*` schemas. The only Samvardiq-relevant Supabase objects were Supabase's own `rls_auto_enable()` function and `ensure_rls` event trigger (F1, below), and default ACLs granting `anon`/`authenticated`/`service_role` full privileges on new tables, sequences and functions (F2, below). Supabase-provisioned extensions (`pg_stat_statements`, `pgcrypto`, `plpgsql`, `supabase_vault`, `uuid-ossp`) are the platform's; Samvardiq requires none.
+
+### 19.2 Migrations executed and structural verification
+
+Five invocations of `npm run migrate:staging`: **#1** migrated all four packages with the unmodified W1A-validated runner; **#2** first applied the hardening (§19.3); **#3–#5** were idempotency re-runs (no journal change, no drift). Journals after every run: `drizzle_data_foundation` 2, `drizzle_identity_access` 5, `drizzle_clinic_cms_connector` 3, `drizzle_communication_orchestration` 2 — each row's sha256 and timestamp independently recomputed from the repository's SQL files and matching.
+
+`verifySupabaseStaging.ts structure` — **12/12**: 16 physical tables (no views/matviews); `samvardiq_app` exactly one, NOSUPERUSER/NOCREATEDB/NOCREATEROLE/NOBYPASSRLS/NOREPLICATION, no CREATE on `public`/database; the exact per-table DML grant matrix (no TRUNCATE/REFERENCES/TRIGGER anywhere); 3 governed triggers enabled with `SECURITY INVOKER` functions; 12 tenant tables `ENABLE`+`FORCE` RLS with GUC-keyed policies and 4 platform-global tables RLS-on with only the scoped policy; no credential-bearing column other than `*_reference` (`secret_reference`, `access_token_reference`); `anon`/`authenticated` hold no privilege; the runtime role can reach nothing outside `public`; **S8: `postgres` cannot `SET ROLE samvardiq_app` (this is what would expose a temporary grant left behind by a killed verification session — remedy: `REVOKE samvardiq_app FROM postgres`)**; **drift audit: 14 catalog categories / 304 items identical** to a reference cluster migrated and hardened by the same code.
+
+### 19.3 Supabase findings F1 and F2 (the W1A "no incompatibility" claim was false)
+
+- **F1 — automatic RLS with no policy.** Supabase's `ensure_rls` event trigger runs `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` on every table created in `public`. The four platform-global tables — `identities`, `identity_provider_links`, `communication_channels`, `webhook_event_dedup` — are deliberately created **without** RLS (a channel/identity/dedup lookup has no organization yet), so on Supabase they became RLS-enabled with **zero policies**: deny-all for `samvardiq_app`, i.e. a broken runtime that every local test still passed. Observed on the real project after run #1. **Fix:** RLS stays enabled (deny-by-default for every other role) and one permissive policy `samvardiq_app_platform_global ... FOR ALL TO samvardiq_app USING (true) WITH CHECK (true)` is added per table; grants, not the policy, still bound the runtime role.
+- **F2 — over-broad default privileges.** `anon`, `authenticated` and `service_role` held full privileges on all 16 tables, and the 3 trigger functions were executable by PUBLIC. **Fix:** revoke everything on all `public` tables and sequences from `anon` and `authenticated`, and revoke EXECUTE on the 3 Samvardiq functions from PUBLIC and from those roles (a trigger function's EXECUTE privilege is checked at `CREATE TRIGGER`, never when the trigger fires, so runtime is unaffected). The revoke covers **every** table in `public` — Samvardiq owns `public` on this project.
+
+The fix is `apps/api/scripts/supabaseHardening.ts`, applied by the runner after the four migrations and idempotent. Regression coverage rehearses Supabase's real `ensure_rls` trigger, default ACLs and roles on a disposable cluster: `apps/api/test/integration/supabasePlatform.test.ts` (the defects reproduce without the fix; the fix repairs them; idempotent; the platform-global list is exhaustive) and `stagingVerifier.test.ts` (the verifier passes on the correct schema and **fails** on the F1/F2-defective one).
+
+**Deliberately not done** (explicit deferred security decisions, §19.5): `service_role` privileges are unchanged; the Data API exposed-schema configuration is unchanged; default ACLs for *future* tables are not altered.
+
+### 19.4 Behavioural verification on staging (as the real runtime role) — 21/21
+
+Because `postgres` has `BYPASSRLS`, RLS can only be proven as `samvardiq_app`. `postgres` is a member of it (platform-granted by `supabase_admin`, ADMIN OPTION, **no SET**), so the Founder authorized exactly one temporary change, `GRANT samvardiq_app TO postgres WITH SET TRUE` — no password, no LOGIN, no privilege change — scoped to the verification session and revoked afterwards. `verifySupabaseStaging.ts behavior --grant-set-role` implements the lifecycle (`temporaryRoleGrant.ts`): record the pre-grant state (P1) → grant → prove `SET ROLE` yields `current_user = samvardiq_app`, `rolbypassrls = false`, `rolsuper = false` (P2) → run the suite as `samvardiq_app` on every pooled session → **always** revoke on a cleanup path that runs even if the suite aborts, and independently prove restoration (R1–R3).
+
+Results (all PASS, against `samvardiq-staging`, the four packages' real repositories, synthetic `w1b-` data only):
+
+- **B0** every table empty beforehand (the suite refuses to write otherwise); **B1** all pooled sessions are `samvardiq_app`, NOBYPASSRLS.
+- **B2** cross-organization isolation (repository and raw SQL; cross-org INSERT = `42501`, cross-org UPDATE = 0 rows). **B12** missing-context fail-closed across all 12 tenant tables and 4 pools (`identity_audit_events` exposes only its designed global events), plus no-context writes rejected `42501`.
+- **B3** approval atomicity (commit = request + record; induced failure rolls back both). **B4** concurrency (two simultaneous decisions → exactly one record, one `ApprovalRequestConcurrencyError`). **B5** approval-record immutability: runtime UPDATE/DELETE `42501`, even the owner blocked by the trigger (`P0001`); goal-consistency trigger rejects a mismatch.
+- **B6/B7** identity provisioning as the runtime role (the F1 fix proof) and membership authorization (OWNER/MEMBER/VIEWER/service; cross-org, unlinked, suspended denied; a service principal never carries approval authority); org-or-self membership reads, identity context read-only, spoofed insert `42501`. **B8** identity-audit isolation + immutability (`42501` / owner `P0001`).
+- **B9** CMS connector: per-organization connection, reference-only secret, evidence with human and service actors, actor CHECK (`23514`), cross-org denial. **B10** communication: platform-global channel lookup, duplicate rejection (`23505`), isolated conversations/messages/raw content, dedup, purge. **B11** W2C handoff read path: RLS-scoped, `HUMAN_HANDOFF_REQUESTED` only, real `timestamptz` ordering and cursor pagination.
+- **B13** every persisted row synthetic; **B14** no pooled session ever failed its role switch; **B15** cleanup.
+
+**Synthetic-data cleanup.** Cleanup is `TRUNCATE` by the owner, not `DELETE`: the immutability triggers (correctly) forbid DELETE on `approval_records` and `identity_audit_events` even for the owner. It is safe only because the suite refuses to start unless all 16 tables are empty, and **re-proves "only `w1b-` rows exist" immediately before truncating** — otherwise it refuses and destroys nothing. After the run all 16 tables were empty, the 3 triggers still enabled, journals unchanged.
+
+**Temporary role membership — proven revoked (R1–R3, plus a separate independent query).** After the run, the only membership edge on `samvardiq_app` is the original platform one (member `postgres`, grantor `supabase_admin`, ADMIN OPTION, INHERIT false, SET false), identical to the P1 record; `pg_has_role('postgres','samvardiq_app','SET')` is `false`; `samvardiq_app` attributes are identical to before (it did **not** gain LOGIN — it has had `LOGIN` since its migration `CREATE ROLE`, passwordless by design — nor SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION); the runtime grant matrix is unchanged. `REVOKE samvardiq_app FROM postgres` removes only grants **made by `postgres`** — the temporary edge; the `supabase_admin`-granted edge is platform provisioning that this workstream neither created nor may remove, and removing it would stop `postgres` from administering the role (e.g. provisioning its password later). The lifecycle is regression-tested (`temporaryRoleGrant.test.ts`): staging-shaped topology, in-place edge, no prior edge, an aborted suite, and a failed pre-check that must issue no grant at all.
+
+### 19.5 Deferred security decisions and open items (each needs its own Founder decision)
+
+1. **`service_role`** still holds its default privileges on all 16 tables. It is a server-only key that bypasses RLS by platform design and is never used or issued by any Samvardiq component (§10) — but it is a standing risk if that key ever leaks; whether to revoke it is deferred.
+2. **Data API exposed-schema setting** is a project setting not readable via SQL and was not changed. Verify in the Supabase dashboard that `public` is not exposed; even if it were, `anon`/`authenticated` hold no privilege and RLS is enabled on every table.
+3. **Default ACLs for future objects** are unchanged; re-run `npm run migrate:staging` after any new migration to re-apply the revokes and the platform-global policy list (`supabaseHardening.ts`), and update `PLATFORM_GLOBAL_TABLES` when a new RLS-free table is designed — the verifier fails on any unclassified table.
+4. **Runtime credential:** `samvardiq_app` has no password. Provisioning it and choosing the runtime connection (Direct vs Session Pooler, §8) belongs to the later API-deployment workstream.
+5. Four moderate, **dev-only** advisories (`drizzle-kit` → `esbuild` dev-server, GHSA-67mh-4wv8-2f99) exist in four packages, pre-date this work, and their only offered fix is a semver-major downgrade; deferred.
+6. The staging pooler username is a constant in `stagingDb.ts` (an identifier, not a secret); a second staging project would need it made configurable.
+
+### 19.6 Reproduce
+
+From `apps/api/`, with `SAMVARDIQ_DEPLOY_ENV=staging` and `MIGRATION_DATABASE_URL` in your own shell: `npm run migrate:staging` (idempotent) → `node --import tsx scripts/verifySupabaseStaging.ts structure` (read-only) → `node --import tsx scripts/verifySupabaseStaging.ts behavior --grant-set-role` (only with explicit authorization of the temporary role grant).
