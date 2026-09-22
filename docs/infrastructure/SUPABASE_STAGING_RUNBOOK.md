@@ -1,6 +1,6 @@
 # Supabase Staging Migration Runbook
 
-**STATUS: EXECUTED ON `samvardiq-staging` (INFRA-W1B, 2026-09-21).** §§1–18 were written by INFRA-W1A (discovery/audit only) and have been corrected where W1B's execution against the real Supabase project disproved them — most importantly §7 (Supabase was **not** free of incompatibilities; see §19, findings F1/F2). §19 is the execution record and verification evidence. No secret value appears anywhere in this document.
+**STATUS: EXECUTED ON `samvardiq-staging` (INFRA-W1B 2026-09-21, INFRA-W1C 2026-09-22).** §§1–18 were written by INFRA-W1A (discovery/audit only) and have been corrected where W1B's execution against the real Supabase project disproved them — most importantly §7 (Supabase was **not** free of incompatibilities; see §19, findings F1/F2, and §20, findings F3/F4). §19 is the W1B execution record; §20 is the W1C privilege-surface-hardening record. No secret value appears anywhere in this document.
 
 **Depends on:** `ADR-DATA-001` (Supabase-managed PostgreSQL approved as hosting, `ARCH` decisions register), `ADR-IDENTITY-001`/`ADR-IDENTITY-002`. Samvardiq checkpoint at the start of INFRA-W1B: `7b74bf60baf19019bc1ed25daa1ae2e7aced3f27`.
 
@@ -243,3 +243,93 @@ Results (all PASS, against `samvardiq-staging`, the four packages' real reposito
 ### 19.6 Reproduce
 
 From `apps/api/`, with `SAMVARDIQ_DEPLOY_ENV=staging` and `MIGRATION_DATABASE_URL` in your own shell: `npm run migrate:staging` (idempotent) → `node --import tsx scripts/verifySupabaseStaging.ts structure` (read-only) → `node --import tsx scripts/verifySupabaseStaging.ts behavior --grant-set-role` (only with explicit authorization of the temporary role grant).
+
+## 20. INFRA-W1C Execution Record (2026-09-22) — Supabase Data API & Privilege Surface Hardening
+
+Scope: `samvardiq-staging` only. No Supabase Auth, API/web deployment, Meta/WhatsApp configuration, live Clinic CMS connection, AI provider configuration, or production change was made.
+
+### 20.1 Authority review
+
+`ADR-FRONTEND-001` (`ARCH-018`) already settles the general policy question this workstream opened with. Its binding Frontend-Boundary Rules state: `apps/web` "never talks to PostgreSQL or Supabase's database directly" (rule 1) and may use `@supabase/supabase-js` "for ONE purpose only: obtaining/refreshing a session... It never queries Supabase's database or storage" (rule 2, restating `ARCH-016`). No new ADR was needed to conclude that Samvardiq's transactional tables are not meant to be reachable through the Data API by any first-party client — that was already decided. `docs/11_Decisions.md` confirms `ARCH-019` remains the highest recorded identifier; none was consumed.
+
+### 20.2 Repository Data API usage audit (Step 7) — none exists
+
+`apps/web/src/auth/supabaseClient.ts` is the only `@supabase/supabase-js` import anywhere in the repository, and it calls only `.auth.signInWithPassword`, `.auth.signOut`, `.auth.getSession`, `.auth.onAuthStateChange` — never `.from()` or `.rpc()`. No `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_ANON_KEY` is read server-side anywhere. No Edge Function, no raw `/rest/v1` call, no RPC invocation exists in application code.
+
+### 20.3 Actual staging privilege/exposure inventory (Steps 3–4)
+
+A read-only catalog inventory (schemas, tables, sequences, functions, policies, triggers, default ACLs, role grants/attributes/memberships) found **zero unclassified Samvardiq objects**: 9 runtime-transactional tables, 4 platform-global runtime tables, 3 audit tables, 3 trigger functions, 4 migration-journal schemas, 0 sequences (all primary keys are application-generated strings, per `ADR-DATA-001`). `anon`/`authenticated` hold zero grants on any of the 16 tables (confirmed both in the catalog and by a live HTTP probe, §20.4). `service_role` holds full grants on all 16 (unchanged, `bypassrls=true`, never used by Samvardiq — §20.6). `postgres`'s own pre-existing membership in `samvardiq_app` (granted by `supabase_admin`, ADMIN OPTION, no SET) is unchanged from W1B.
+
+### 20.4 Data API configuration — established without a dashboard screenshot
+
+Rather than ask the Founder for a dashboard screenshot, this was established two ways:
+
+1. **Supabase's own security advisor** (read-only, via the authenticated Supabase management connector — no database credential involved) flagged `public.rls_auto_enable()`, a `SECURITY DEFINER` function, as callable by `anon`/`authenticated` via `/rest/v1/rpc/rls_auto_enable`. An RPC route existing at all is only possible if `public` is a Data-API-exposed schema.
+2. **A live black-box HTTP probe**, using only the publishable (non-secret-by-design) anon key, against the real project (`https://kobkelmeoufdaaesupgf.supabase.co`), confirmed this directly (§20.8): `GET /rest/v1/goals`, `/organizations`, `/identities`, `/approval_records` and `POST /rest/v1/organizations` all returned `401` with Postgres SQLSTATE `42501` ("permission denied for table X") — a permission failure from Postgres itself, not a `404` from PostgREST's schema cache, which is what a non-exposed schema would return.
+
+**Conclusion: `public` is currently Data-API-exposed.** No mutation was made to this setting (out of this session's scope by explicit instruction) — see §20.6.
+
+### 20.5 Threat model (Step 6) — summary
+
+| # | Question | Classification |
+|---|---|---|
+| 1–2 | Can `anon`/`authenticated` reach any Samvardiq table? | **PREVENTED** — zero grants (catalog + live HTTP proof, `42501` on every path tried) |
+| 3 | Can `service_role` reach Samvardiq tables? | **ACCEPTED BY AUTHORITY (deferred)** — yes, by design, unused by Samvardiq; narrowing is a Founder decision (§20.6) |
+| 4 | Does `service_role` bypass RLS? | **NOT APPLICABLE to Samvardiq** — platform contract, never issued to any Samvardiq component |
+| 5 | Can exposed schemas make tables *discoverable*? | **CURRENTLY EXPOSED** (informational) — `public` is Data-API-exposed, but zero grants mean no read/write capability regardless (§20.4) |
+| 6 | Trigger/support functions executable by an unintended role? | **PREVENTED** — `PUBLIC`/`anon`/`authenticated` revoked on all 3 (F2); default-ACL closed for future functions except the documented PUBLIC residual (F3, §20.7) |
+| 7 | Sequences exposed? | **NOT APPLICABLE** — zero sequences exist |
+| 8 | Can audit tables be modified? | **PREVENTED** — immutability triggers (W1B), unchanged |
+| 9 | Can platform-global tables be modified by an unintended role? | **PREVENTED** — scoped policy, `anon`/`authenticated` zero grants |
+| 10 | Identity tables reachable outside the governed API? | **PREVENTED** — same zero-grant proof |
+| 11 | Connector secrets reachable? | **NOT APPLICABLE** — only `*_reference` columns exist; no secret value is ever stored |
+| 12 | Communication records reachable? | **PREVENTED** — same zero-grant proof |
+| 13 | Future tables inherit unsafe privileges? | **REQUIRES HARDENING → FIXED** (F3, §20.7) for `anon`/`authenticated`; `service_role` deliberately unchanged |
+| 14–18 | Migration/`samvardiq_app`/future-Auth/identity-adapter/RLS breakage risk? | **PREVENTED** — structural drift audit (§20.9) proves the runtime grant matrix, RLS, FORCE RLS and triggers are byte-identical before/after |
+| 19 | Hidden Supabase SDK dependency introduced? | **NOT APPLICABLE** — no new dependency; the Supabase management connector used for read-only discovery is operator tooling, not application code |
+| 20 | Is any Data API access actually required by current source? | **NOT APPLICABLE** — confirmed none (§20.2) |
+
+### 20.6 `service_role` decision — RETAINED (deferred, not this session's call)
+
+No Samvardiq runtime dependency on `service_role` exists: not used for migrations (those authenticate as `postgres`), not needed by the current identity/CMS/communication/W2C code (all confirmed via source audit, §20.2), not required by any approved architecture. Its privileges are **retained exactly as Supabase provisioned them** — no revoke, no narrowing — because doing so is a security-policy mutation with no existing ADR authorizing it, and this session's explicit instruction is not to change `service_role` without a separate Founder decision. If a future decision narrows it, the safest first step (once decided) is revoking `service_role`'s table/sequence grants the same way F2 did for `anon`/`authenticated`, while leaving its `BYPASSRLS`/schema-membership attributes alone (those are platform contract, not something Samvardiq's own migrations can safely alter).
+
+### 20.7 Default-ACL and function hardening — F3, F4 (implemented; narrow extension of the already-approved F2 remediation)
+
+- **F3 — future-object default ACLs.** F2 (W1B) only fixed *existing* objects; Supabase's own default-ACL rows for `postgres`'s future tables/sequences/functions still explicitly named `anon`/`authenticated`, so the very exposure F2 closed would silently reopen on the next migration that adds a table. Fixed via `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ... FROM anon, authenticated` for tables, sequences and functions. **Verified empirically** (a rolled-back probe `CREATE TABLE`/`CREATE SEQUENCE`/`CREATE FUNCTION` against real staging, before and after the fix) that a brand-new object no longer names `anon`/`authenticated`.
+  **Honest residual gap:** PostgreSQL unconditionally grants `PUBLIC` EXECUTE to a *brand-new* function regardless of default-privilege settings — verified on both `samvardiq-staging` and a bare vanilla-Postgres cluster; `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` does not suppress it once a schema's default-ACL row has no prior explicit PUBLIC record. `service_role`'s default ACL is deliberately left untouched, same reasoning as F2/§20.6. A future migration that adds a new trigger function remains briefly `PUBLIC`-executable until it is added to `OWN_FUNCTIONS` and the hardening step is re-run — exactly the same operational discipline F2 already required and §19.5/item 3 already documented.
+- **F4 — function `search_path` pinning.** Supabase's own security advisor (`function_search_path_mutable`) flagged the 3 Samvardiq trigger functions. None is `SECURITY DEFINER` (verified, all invoker-rights), so this could never enable privilege escalation, but pinning `search_path = public, pg_temp` is cheap, idempotent, and closes the advisory with zero behaviour change — verified locally that the goal-consistency trigger still resolves its one bare table reference and still correctly rejects a mismatched request after the pin. **Re-running Supabase's advisor after applying this to staging confirmed the `function_search_path_mutable` finding is gone.** The two remaining advisor findings (`anon`/`authenticated_security_definer_function_executable`, both about `public.rls_auto_enable()`) concern a Supabase-owned function this workstream deliberately does not modify (§20.6's "don't touch Supabase-managed objects" reasoning) — direct invocation was proven harmless (§20.8).
+
+Both are applied by the existing `apps/api/scripts/supabaseHardening.ts` (same idempotent entry point as F1/F2 — no new script, no new abstraction) and regression-tested in `apps/api/test/integration/supabasePlatform.test.ts`.
+
+### 20.8 Data API negative tests (Step 18) — real HTTP, not just SQL inference
+
+Using the publishable anon key against `https://kobkelmeoufdaaesupgf.supabase.co`:
+
+| Request | Result |
+|---|---|
+| `GET /rest/v1/goals?select=*` | `401`, SQLSTATE `42501` permission denied |
+| `GET /rest/v1/organizations?select=*` | `401`, `42501` |
+| `GET /rest/v1/identities?select=*` (platform-global table) | `401`, `42501` |
+| `GET /rest/v1/approval_records?select=*` (audit table) | `401`, `42501` |
+| `POST /rest/v1/organizations` (insert attempt) | `401`, `42501` |
+| `POST /rest/v1/rpc/rls_auto_enable` | `400`, harmless (`cannot display a value of type event_trigger` — the function requires real event-trigger context) |
+| `GET /rest/v1/` (schema introspection) | `401`, "Only the `service_role` API key can be used for this endpoint" |
+
+`authenticated`'s equivalent behaviour was not tested with a live HTTP request (fabricating a Supabase Auth session is out of this session's scope), but is dispositive from the catalog alone: `authenticated` holds the same zero grants as `anon` (§20.3), and Postgres's grant check happens before RLS evaluation, so the same `42501` outcome is structurally guaranteed regardless of a valid JWT. `service_role`'s Data API behaviour was not tested — its key is not publishable and was correctly never read or handled.
+
+### 20.9 Post-mutation structural verification, idempotency, drift
+
+`verifySupabaseStaging.ts structure` — **14/14** (12 from W1B/S1–S8, plus new **S9** default-ACL and **S10** search_path checks). Drift audit: **15 categories / 307 catalog items identical** to a reference cluster built by the identical migration+hardening code (up from 14/304 in W1B — the new categories are the default-ACL fingerprint and the two additional `functions`/`S9`/`S10`-covered facts folded into existing categories). The hardening runner was executed twice more (idempotent both times): journals unchanged (2/5/3/2), no privilege re-expansion, `S4`'s runtime grant matrix for `samvardiq_app` byte-identical throughout.
+
+### 20.10 Runtime-role regression assessment — no new temporary grant needed
+
+F3/F4 touch only (a) default privileges governing *future* objects Samvardiq's own migrations haven't created yet, and (b) `search_path` on 3 existing `SECURITY INVOKER` functions. Neither can change `samvardiq_app`'s own grants, RLS policies, FORCE RLS, or trigger enablement — all proven byte-identical before/after by the drift audit (§20.9), and the search_path pin's zero-behaviour-change claim was independently proven locally (§20.7). No plausible regression path to `samvardiq_app`'s runtime behaviour exists, so — per this session's own instruction — the W1B temporary `GRANT samvardiq_app TO postgres WITH SET TRUE` lifecycle was **not** re-invoked. The 21/21 behavioural proof from W1B (unaffected by anything in this workstream) stands as the current behavioural evidence.
+
+### 20.11 Deferred (unchanged from, or newly added to, §19.5)
+
+1. **`service_role`** — retained; see §20.6.
+2. **Data API exposed-schema list** — now known to include `public` (§20.4); narrowing it (removing `public` from the Data API's exposed schemas, since no first-party client needs it there) is a genuine Founder/operator dashboard decision, not made in this session.
+3. **Default ACLs for `service_role`** — deliberately unchanged, same reasoning as item 1.
+4. **The `PUBLIC`-execute residual on brand-new functions** (§20.7) — not closeable at the default-privilege level on this platform; remains dependent on the existing "add to `OWN_FUNCTIONS`, re-run the hardening step" discipline.
+5. **`samvardiq_app` runtime credential** — still unset; belongs to INFRA-W1D (the future deployed API's database-credential strategy), not this workstream.
+6. Items 4–6 from §19.5 (dev-only dependency advisories, the pooler-username constant) are unchanged.

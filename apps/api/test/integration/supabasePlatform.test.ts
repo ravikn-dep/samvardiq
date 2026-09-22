@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test';
 import { createPostgresClient, type PostgresClient } from '@samvardiq/data-foundation/dist/postgres/client.js';
 
 import { startLocalSupabaseCluster, type LocalSupabaseCluster } from '../../scripts/localSupabaseCluster.js';
-import { PLATFORM_GLOBAL_POLICY, PLATFORM_GLOBAL_TABLES, applySupabaseHardening } from '../../scripts/supabaseHardening.js';
+import { OWN_FUNCTIONS, PLATFORM_GLOBAL_POLICY, PLATFORM_GLOBAL_TABLES, applySupabaseHardening } from '../../scripts/supabaseHardening.js';
 
 /**
  * INFRA-W1B regression coverage for the two Supabase-platform defects (F1/F2)
@@ -113,6 +113,45 @@ test('hardening is idempotent: re-applying changes nothing (one platform-global 
       1,
     );
   }
+});
+
+test('F3: hardening fixes the DEFAULT ACL too — a table/sequence/function created AFTER hardening never grants anon/authenticated (proves future migrations cannot reopen F2)', async () => {
+  await applySupabaseHardening(owner.pool);
+  await owner.pool.query('create table public.w1c_future_table (id text primary key)');
+  await owner.pool.query('create sequence public.w1c_future_seq');
+  await owner.pool.query(`create function public.w1c_future_fn() returns void language plpgsql as $$ begin end; $$`);
+  try {
+    for (const relname of ['w1c_future_table', 'w1c_future_seq']) {
+      const acl = await count(`select count(*) as n from pg_class where relname = $1 and relacl::text ~ '(anon|authenticated)='`, [relname]);
+      assert.equal(acl, 0, `${relname}: default ACL must not name anon/authenticated`);
+    }
+    // Named anon/authenticated grants are gone (the fixable half of F3); PUBLIC-execute on a brand-new
+    // function is NOT fixable via default privileges on this platform (documented, verified — see
+    // supabaseHardening.ts's own header comment) and is deliberately not asserted false here.
+    const namedGrant = await count(`select count(*) as n from pg_proc where proname = 'w1c_future_fn' and proacl::text ~ '(anon|authenticated)='`);
+    assert.equal(namedGrant, 0, 'a brand-new function must not name anon/authenticated even though PUBLIC remains');
+  } finally {
+    await owner.pool.query('drop table public.w1c_future_table');
+    await owner.pool.query('drop sequence public.w1c_future_seq');
+    await owner.pool.query('drop function public.w1c_future_fn()');
+  }
+});
+
+test('F4: hardening pins search_path on all 3 Samvardiq functions, closing the mutable-search_path advisory with no behavior change', async () => {
+  await applySupabaseHardening(owner.pool);
+  const rows = await owner.pool.query(`select proname, proconfig from pg_proc where proname = any($1)`, [[...OWN_FUNCTIONS]]);
+  assert.equal(rows.rows.length, 3);
+  for (const row of rows.rows as { proname: string; proconfig: string[] | null }[]) {
+    assert.ok((row.proconfig ?? []).some((c) => c.startsWith('search_path=')), `${row.proname}: search_path pinned`);
+  }
+  // Behavior unchanged: the goal-consistency trigger still resolves its bare `recommendations` reference correctly.
+  await owner.pool.query(`insert into organizations (organization_id, organization_type, name, status) values ('w1c-org', 'clinic', 'x', 'active')`);
+  await owner.pool.query(`insert into goals (organization_id, goal_id, title, description, status) values ('w1c-org', 'w1c-goal', 'x', 'y', 'active')`);
+  await owner.pool.query(`insert into recommendations (organization_id, recommendation_id, goal_id, owning_executive, originating_skill, title, status, approval_requirement, risk, confidence, created_at) values ('w1c-org', 'w1c-rec', 'w1c-goal', 'CMO', 'x', 'x', 'Ready for Approval', 2, 'low', 80, now())`);
+  await assert.rejects(
+    owner.pool.query(`insert into approval_requests (organization_id, approval_request_id, goal_id, recommendation_id, requested_by, required_approval_level, risk, reason, status) values ('w1c-org', 'w1c-req', 'wrong-goal', 'w1c-rec', 'CMO', 2, 'low', 'x', 'PENDING')`),
+    (error: { code?: string }) => error.code === 'P0001',
+  );
 });
 
 test('the platform-global list is exhaustive: every other public table keeps FORCE RLS and at least one tenant policy', async () => {

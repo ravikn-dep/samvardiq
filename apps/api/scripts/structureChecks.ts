@@ -242,6 +242,30 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
 
   await reporter.check('E3 exposure (informational): service_role and Data API', async () => {
     const service = await rowsOf(admin, `select count(*)::int as n from pg_class c join pg_namespace ns on ns.oid = c.relnamespace where ns.nspname = 'public' and c.relkind = 'r' and has_table_privilege('service_role', c.oid, 'SELECT')`);
-    return `service_role (server-only key, bypasses RLS by platform design, never used by Samvardiq) can SELECT ${n(service[0]!.n)} public tables; the Data API exposed-schema list is a project setting not readable via SQL — anon/authenticated are fully revoked (E1) and RLS is enabled everywhere (S6) regardless`;
+    return `service_role (server-only key, bypasses RLS by platform design, never used by Samvardiq — INFRA-W1C Founder decision: retained, not narrowed) can SELECT ${n(service[0]!.n)} public tables; INFRA-W1C confirmed empirically (a live anon-key HTTP request to /rest/v1/goals) that 'public' IS Data-API-exposed — anon/authenticated are fully revoked (E1) and RLS is enabled everywhere (S6) regardless, so this exposure carries no read/write capability`;
+  });
+
+  await reporter.check('S9 default ACLs (future objects): anon/authenticated hold no privilege by default on any future public table, sequence or function', async () => {
+    const rows = await rowsOf(
+      admin,
+      `select d.defaclobjtype as objtype, d.defaclacl::text as acl from pg_default_acl d join pg_namespace n on n.oid = d.defaclnamespace
+        where n.nspname = 'public' and pg_get_userbyid(d.defaclrole) = current_user and d.defaclobjtype in ('r','S','f')`,
+    );
+    for (const row of rows) {
+      const acl = String(row.acl ?? '');
+      assert.doesNotMatch(acl, /\banon=/, `default ACL (${row.objtype}): anon must not be named`);
+      assert.doesNotMatch(acl, /\bauthenticated=/, `default ACL (${row.objtype}): authenticated must not be named`);
+    }
+    return `${rows.length} default-ACL rows checked (r/S/f), none name anon/authenticated (a brand-new object still gets an implicit PUBLIC-execute grant for functions specifically — a documented PostgreSQL behavior, not overridable here; closed per-function instead, see S5/E1)`;
+  });
+
+  await reporter.check('S10 own functions: search_path pinned (closes the Supabase advisor`s function_search_path_mutable finding)', async () => {
+    const rows = await rowsOf(admin, `select proname, proconfig from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = 'public' and proname = any($1) order by 1`, [[...OWN_FUNCTIONS]]);
+    assert.equal(rows.length, 3);
+    for (const row of rows) {
+      const config = (row.proconfig as string[] | null) ?? [];
+      assert.ok(config.some((c) => c.startsWith('search_path=')), `${row.proname}: search_path must be pinned`);
+    }
+    return '3/3 functions have a pinned search_path';
   });
 }

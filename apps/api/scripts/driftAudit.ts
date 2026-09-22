@@ -55,6 +55,12 @@ const FINGERPRINT_QUERIES: Record<string, { text: string; params?: unknown[] }> 
     text: `select r as role, (select count(*)::int from pg_class c join pg_namespace ns on ns.oid = c.relnamespace where ns.nspname = 'public' and c.relkind = 'r' and has_table_privilege(r, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) as tables
              from unnest(array['anon','authenticated']) r order by 1`,
   },
+  // W1C F3: default ACLs for the admin role's own future objects in public (tables/sequences/functions).
+  // Scoped to `current_user` only — the reference cluster has no `supabase_admin`-owned rows to compare against.
+  futureObjectDefaultAcls: {
+    text: `select d.defaclobjtype as objtype, d.defaclacl::text as acl from pg_default_acl d join pg_namespace n on n.oid = d.defaclnamespace
+            where n.nspname = 'public' and pg_get_userbyid(d.defaclrole) = current_user order by 1`,
+  },
 };
 
 type Fingerprint = Record<string, unknown[]>;
