@@ -333,3 +333,91 @@ F3/F4 touch only (a) default privileges governing *future* objects Samvardiq's o
 4. **The `PUBLIC`-execute residual on brand-new functions** (§20.7) — not closeable at the default-privilege level on this platform; remains dependent on the existing "add to `OWN_FUNCTIONS`, re-run the hardening step" discipline.
 5. **`samvardiq_app` runtime credential** — still unset; belongs to INFRA-W1D (the future deployed API's database-credential strategy), not this workstream.
 6. Items 4–6 from §19.5 (dev-only dependency advisories, the pooler-username constant) are unchanged.
+
+## 21. INFRA-W1D Execution Record (2026-09-22) — Governed API Runtime Database Identity & Staging Deployment Readiness
+
+Scope: local implementation and adversarial proof only. No staging mutation, no hosting choice, no Supabase Auth configuration, no deployment.
+
+### 21.1 Existing connection model (as found, unchanged in shape)
+
+```
+apps/api/src/index.ts (composition root)
+  -> createIdentityClient() / createDataFoundationClient() / createClinicConnectorClient() / createCommsClient()
+       each -> packages/*/src/postgres/client.ts: new Pool({ connectionString: process.env.DATABASE_URL })
+  -> repositories over each client.db -> AuthorizationService / GoalReadService / etc.
+  -> buildServer(deps, config) [server.ts, Fastify] -> routes -> application-services handlers
+       -> authenticateRequest -> AuthorizationService.resolveTrustedContext() (TrustedOrganizationContext)
+       -> repository methods (organizationId-scoped) -> withOrganizationContext(db, orgId, fn)
+            -> db.transaction(tx => { tx.execute(set_config('app.current_org_id', orgId, true)); return fn(tx) })
+              [SET LOCAL semantics -- reverts at COMMIT/ROLLBACK, safe under any pooling mode]
+  -> RLS enforced by Postgres using app.current_org_id
+  -> graceful shutdown (pre-existing, unchanged): SIGTERM/SIGINT -> app.close() -> Promise.allSettled(4x client.close())
+```
+
+`DATABASE_URL` was already the correct, pre-existing, documented name for the runtime (`samvardiq_app`-scoped) connection string (§9), distinct from `MIGRATION_DATABASE_URL` — no new naming convention was needed. **Gaps found:** no fail-closed check that `DATABASE_URL` is actually set or distinct from the migration URL; no post-connection proof that the process is actually running as `samvardiq_app`; no `apps/api/.env.example`.
+
+### 21.2 Runtime role contract (re-verified against real staging, unchanged since W1C)
+
+`samvardiq_app`: `LOGIN=true`, no password, `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION`, exact per-table DML matrix (structureChecks.ts S3/S4), no role memberships. Structure verification re-run: **14/14**, zero drift from the W1C checkpoint.
+
+### 21.3 Threat model (Steps 5/28) — summary of the full A–AJ matrix
+
+All PostgreSQL-enforced threats (D–N, AA, AC) are **PREVENTED**, proven against real disposable PostgreSQL (§21.5): a misrouted admin credential is caught by `assertRuntimeRole`; the runtime role cannot `CREATE DATABASE`/`CREATE ROLE`/`ALTER ROLE` itself/`SET ROLE` to the owner/disable or alter RLS/DDL/`DROP`/mutate immutable audit rows; pooled-connection organization context never survives across requests, a no-context request, or an aborted transaction, including under concurrency. Config-boundary threats (A, B, W, Z, AA, AI) are **PREVENTED** by `assertRuntimeDatabaseConfigured`'s fail-closed checks. Threats C, AB (Data API/`service_role` as an alternate path) are **PREVENTED BY EXISTING ARCHITECTURE** — INFRA-W1C already proved `anon`/`authenticated` hold zero grants and no Samvardiq code uses the Data API; `service_role` is never read by this application (INFRA-W1C §20.2/20.6). S, T, U, V (secret leakage) are **PREVENTED** — the deployment-shaped proof (§21.6) confirms no connection string appears in stdout/stderr on any path, and ADR-FRONTEND-001 already prevents U structurally. X, Y (health/readiness leakage) are **PREVENTED** — `/health` is unchanged, liveness-only. F, G, H, I, J, K, L, M, N, AD, AE, AF, AG are covered above or **NOT APPLICABLE** (TLS verification, AG, is a `DATABASE_URL`/`pg` SSL-mode operator setting, not application code — deferred to whoever sets the actual staging connection string, matching how the migration runner already treats it). O, P, Q, R, AJ (rotation/exhaustion) are **DEFERRED WITH JUSTIFICATION** — no credential exists yet to rotate; connection-pool sizing is an operational tuning question for whichever host is eventually chosen, not a correctness gap. AH (auto-retry of unsafe operations) is **NOT APPLICABLE** — no retry logic of any kind exists in this code path.
+
+### 21.4 Hosting / deployment target — FOUNDER DECISION REQUIRED (no existing authority)
+
+Repository search confirms: no Dockerfile, no `docker-compose`, no CI workflow, no `vercel.json`/`render.yaml`/`fly.toml`, and ADR-HTTP-001 explicitly states "no Dockerfile, no CI workflow, no cloud config" exist and treats deployment portability as a *property preserved*, not a decision made. **No hosting target for `apps/api` has been approved anywhere in this repository.** This workstream does not choose one.
+
+`apps/api` is architecturally a **persistent, long-running Node process** (ADR-HTTP-001's own reasoning: a long-lived `pg.Pool`, `SIGTERM`/`SIGINT`-based graceful shutdown, Direct-Connection-suited workload) — not a serverless/edge-function shape. The smallest reasonable candidate set, evaluated factually (no invented scoring — none is required by any canonical authority for this decision):
+
+| Candidate | Fastify/Node fit | Long-running process | Connection mgmt | Secrets | Cost (staging) | Notes |
+|---|---|---|---|---|---|---|
+| **Railway** | Native | Yes | Standard `pg.Pool` works as-is | Env vars, UI-managed | Low, usage-based | Git-push deploy, no Dockerfile required |
+| **Render** | Native | Yes | Standard `pg.Pool` works as-is | Env vars, UI-managed | Free/low tier available | Similar shape to Railway |
+| **Fly.io** | Native (needs a Dockerfile or its buildpack) | Yes | Standard `pg.Pool` works as-is | `fly secrets`, encrypted | Low, usage-based | Closest to "a VM", most control |
+| Vercel (serverless functions) | Poor fit | No — functions are torn down between invocations | Long-lived `pg.Pool` reuse is unreliable; graceful-shutdown model doesn't apply | Env vars | Free tier generous | Structurally mismatched to this app's already-chosen architecture, not merely a preference |
+| AWS/GCP/Azure (raw) | Native | Yes | Full control | Full control, but requires building secret-management infra from scratch | Higher setup cost | Disproportionate operational complexity for a solo-founder pilot with no existing IaC/CI |
+
+**No decision made.** Whichever host is chosen determines IPv4/IPv6 availability, which in turn determines the connection-mode choice already recommended in §8 (Direct Connection if IPv6 is available, Session Pooler otherwise) — that recommendation (from INFRA-W1A, re-confirmed unchanged here) still stands and needs no new decision, only the host to know which branch applies.
+
+### 21.5 Real-PostgreSQL adversarial proof (Steps 15–17) — all against a disposable, Supabase-shaped cluster, never mocked
+
+- `assertRuntimeRole` rejects the owner/migration connection; accepts the real `samvardiq_app` connection with all dangerous attributes `false`.
+- **Privilege escalation matrix** (9 operations): `CREATE DATABASE`, `CREATE ROLE`, `ALTER ROLE ... SUPERUSER`, `ALTER ROLE ... CREATEROLE`, `SET ROLE postgres`, `ALTER TABLE ... DISABLE ROW LEVEL SECURITY`, `ALTER TABLE ... ADD COLUMN` (DDL), `DROP TABLE`, `UPDATE approval_records` (immutable audit) — **all 9 rejected by PostgreSQL itself** (a real SQLSTATE on every one), not by application code.
+- **Expected operations still work** after confirming the lockdown (not overbroad).
+- **Migration/runtime separation**: the runtime credential cannot `CREATE TABLE` (a migration-shaped DDL operation); a structural regression test (`grep`-as-test) proves no source file other than `runtimeDbIdentity.ts` ever reads `MIGRATION_DATABASE_URL` as a value.
+- **Pool-context leakage**, reusing apps/api's own exact connection pattern (checkout from `pool`, `BEGIN`, `set_config(..., true)`, query, `COMMIT`/release): organization A, then B, then no-context, then A again, then an aborted transaction, then 10 concurrent alternating-organization reads — **zero leakage in every case**.
+
+### 21.6 Local deployment-shaped proof (Steps 19–20)
+
+No approved hosting architecture exists yet (§21.4), so the closest practical artifact is this repository's own existing, only-defined build/run convention (`npm run build` -> `node dist/index.js`; no Dockerfile exists to build instead). The actual built artifact was spawned as a real child process against a real disposable cluster:
+
+| Scenario | Result |
+|---|---|
+| `DATABASE_URL` missing | exit 1, no secret in output |
+| `DATABASE_URL` == `MIGRATION_DATABASE_URL` | exit 1, no secret in output |
+| `DATABASE_URL` points at the owner/migration role | exit 1 (caught by `assertRuntimeRole`), no secret in output |
+| `DATABASE_URL` unreachable host | exit 1, no secret in output |
+| Correct `samvardiq_app` `DATABASE_URL` | starts; logs only `host=... database=... role=samvardiq_app` (non-secret); `GET /health` returns `200 {"status":"ok"}` while alive, revealing nothing about the database |
+
+**Graceful shutdown**: `SIGTERM`/`SIGINT` handling in `index.ts` is pre-existing (W5B), unchanged by this workstream, and its core mechanism (`app.close()` stops accepting requests and resolves cleanly) is already covered by `test/shutdown.test.ts`. Behaviourally proving signal-based shutdown via a spawned child process is unreliable on this Windows development sandbox — Windows has no real POSIX signal delivery, so `child.kill('SIGTERM')` forcibly terminates rather than invoking the handler; this is a documented platform limitation of the local proof environment, not a defect in the (portable, standard) shutdown code, which will run on Linux in any real deployment.
+
+### 21.7 Runtime credential architecture (designed; not created)
+
+- **Runtime identity**: `samvardiq_app`, already `LOGIN`-enabled, no password set. Creating one (`ALTER ROLE samvardiq_app PASSWORD $1`, parameterized, generated locally, never displayed) is the only staging mutation this design requires — **not performed in this workstream**.
+- **Migration identity**: unchanged, `MIGRATION_DATABASE_URL`, never read by `apps/api` runtime code (§21.5).
+- **Separation enforced by**: `runtimeDbIdentity.ts`'s two checks (pre-connection: distinct, present; post-connection: authoritatively re-derived from Postgres itself, never trusted from the connection string).
+- **Connection mode**: Direct Connection (preferred) or Session Pooler (IPv6-unavailable fallback) — re-confirmed unchanged from §8/§21.4, decided once the host is chosen.
+- **Secret boundary**: the credential would live only in whichever hosting platform's own secret store is eventually chosen (§21.4); never in `apps/web` (ADR-FRONTEND-001 already prevents this structurally — `apps/web` never touches the database), never logged (verified §21.6), never committed (`.env`/`.env.local` already gitignored, `.env.example` uses only placeholder values).
+
+### 21.8 Founder Decision Gates (both required before staging deployment readiness can be claimed)
+
+**Gate 1 — Hosting target.** Choose one of Railway / Render / Fly.io (§21.4), or name another. No default is assumed.
+
+**Gate 2 — Runtime credential creation.** The exact proposed mutation, to be executed only on explicit authorization:
+1. Generate a strong random password locally (`crypto.randomBytes`, never displayed).
+2. `ALTER ROLE samvardiq_app PASSWORD $1` (parameterized) against `samvardiq-staging` only.
+3. Independently re-verify, immediately after: `samvardiq_app` still has `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION`, no new role membership, the same privilege matrix as S4 — i.e. the mutation changed authentication capability only, nothing else.
+4. Never print, log, or persist the password; inject it directly into whichever secret store Gate 1's host provides.
+
+Neither gate was exercised in this workstream.

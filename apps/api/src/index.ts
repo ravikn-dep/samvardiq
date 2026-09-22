@@ -30,6 +30,7 @@ import {
 import { DeterministicCommunicationInterpreter, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
 
 import { loadConfigFromEnv } from './config.js';
+import { assertRuntimeDatabaseConfigured, assertRuntimeRole } from './runtimeDbIdentity.js';
 import { buildServer } from './server.js';
 
 /**
@@ -44,10 +45,21 @@ import { buildServer } from './server.js';
 async function main(): Promise<void> {
   const config = loadConfigFromEnv();
 
+  // INFRA-W1D: fail closed before opening a single socket if the runtime
+  // database is missing or misconfigured (see runtimeDbIdentity.ts).
+  const target = assertRuntimeDatabaseConfigured();
+
   const identityClient = createIdentityClient();
   const dataFoundationClient = createDataFoundationClient();
   const clinicConnectorClient = createClinicConnectorClient();
   const commsClient = createCommsClient();
+
+  // INFRA-W1D: authoritative, post-connection proof of who this process
+  // actually connected as. All four clients read the same DATABASE_URL, so
+  // one representative check (via identityClient's pool) speaks for all
+  // four. Never logs anything beyond the two non-secret facts it checks.
+  const runtimeRole = await assertRuntimeRole(identityClient.pool);
+  console.log(`Runtime DB identity confirmed: host=${target.host} database=${runtimeRole.currentDatabase} role=${runtimeRole.currentUser}`);
 
   const identities = new PostgresIdentityRepository(identityClient.db);
   const providerLinks = new PostgresIdentityProviderLinkRepository(identityClient.db);
