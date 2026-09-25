@@ -14,15 +14,17 @@
     "lint": "eslint src test",
     "db:generate": "drizzle-kit generate"
   },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "jose": "^6.2.12",
+    "pg": "^8.13.1"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.31.10",
-    "drizzle-orm": "^0.45.2",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.15.0",
-    "jose": "^6.2.12",
-    "pg": "^8.13.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.16.0"

@@ -17,10 +17,12 @@
     "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
     "lint": "eslint src test"
   },
-  "devDependencies": {
+  "dependencies": {
     "@samvardiq/clinic-cms-connector": "file:../clinic-cms-connector",
     "@samvardiq/data-foundation": "file:../data-foundation",
-    "@samvardiq/identity-access": "file:../identity-access",
+    "@samvardiq/identity-access": "file:../identity-access"
+  },
+  "devDependencies": {
     "@types/node": "^22.10.0",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.15.0",

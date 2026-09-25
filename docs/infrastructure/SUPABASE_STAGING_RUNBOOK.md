@@ -421,3 +421,56 @@ No approved hosting architecture exists yet (§21.4), so the closest practical a
 4. Never print, log, or persist the password; inject it directly into whichever secret store Gate 1's host provides.
 
 Neither gate was exercised in this workstream.
+
+## 22. INFRA-W1D-PKG — Provider-neutral deployment packaging (no hosting provider selected; Gate 1 still open)
+
+### 22.1 Finding (pre-fix, reproduced from a clean clone of `9a90707`)
+
+`apps/api` and its seven sibling packages are independent npm projects linked by `file:../<pkg>` (ADR-HTTP-001: no workspaces). Before this change **no project declared any `dependencies`**: Fastify, `@fastify/*`, `pg`, `drizzle-orm`, `jose` and the local `@samvardiq/*` links were all `devDependencies`, so `npm ci --omit=dev` (or any prune) produced an empty tree and a broken deployment. The full clean tree needs installs in eight directories (no repository procedure defined them) and is ~1.2 GB, including `embedded-postgres`, `drizzle-kit`, ESLint and `tsx`.
+
+### 22.2 Correction — runtime vs development dependencies
+
+Classified from actual `src/` imports, per project (the test `apps/api/test/packaging.test.ts` now enforces it):
+
+| Project | `dependencies` (runtime) |
+|---|---|
+| `marketing-intelligence`, `approval-governance` | none (no runtime imports; `marketing-intelligence` is only used by tests) |
+| `identity-access` | `drizzle-orm`, `jose`, `pg` |
+| `data-foundation` | `@samvardiq/approval-governance`, `drizzle-orm`, `pg` |
+| `clinic-cms-connector` | `drizzle-orm`, `pg` |
+| `application-services` | `@samvardiq/{clinic-cms-connector,data-foundation,identity-access}` |
+| `communication-orchestration` | `@samvardiq/{application-services,clinic-cms-connector,identity-access}`, `drizzle-orm`, `pg` |
+| `apps/api` | `fastify`, `@fastify/{cors,helmet,rate-limit}`, `@samvardiq/{application-services,clinic-cms-connector,communication-orchestration,data-foundation,identity-access}` |
+
+Everything else stays in `devDependencies`: TypeScript, ESLint, `tsx`, `embedded-postgres`, `drizzle-kit`, `@types/*`, and packages used only by tests (e.g. `jose` in `application-services`, `marketing-intelligence` in `approval-governance`/`data-foundation`, `data-foundation` in `communication-orchestration`). The `file:` convention and separate per-project installs are unchanged (this is a classification correction, not a workspace conversion); ADR-HTTP-001's wording that the `file:` links are `devDependencies` is superseded in fact for the runtime links, with no architectural change. Lockfile changes are limited to `dev`/`devOptional` flags and the dependency blocks — no version, `resolved` or `integrity` value changed.
+
+### 22.3 Canonical procedure (clean committed source → production runtime)
+
+From the repository root, on a clean checkout, with only Node and npm (tested: Node 24.15.0, npm 11.12.1):
+
+```
+node scripts/api-runtime.mjs install   # npm ci --ignore-scripts in all 8 projects, from lockfiles
+node scripts/api-runtime.mjs build     # npm run build in apps/api (builds the sibling packages, then the API)
+node scripts/api-runtime.mjs prune     # npm prune --omit=dev in all 8 projects
+cd apps/api && node dist/index.js      # start (no tsx, no npm at runtime)
+```
+
+`prune` is destructive to a development checkout; run it only on a deployment build. The measured result on Windows/PowerShell from a clean copy: install ~18 s, build ~35 s, prune ~6 s; `node_modules` across all eight projects fell from 1223 MB to 62 MB. What remains is production dependencies plus `@types/pg`/`@types/node`/`undici-types` (~2.6 MB per project, type-only), kept because `drizzle-orm` declares `@types/pg` as an optional peer dependency (npm marks them `devOptional`).
+
+`build` re-builds sibling packages more than once because several packages have their own `prebuild`; this is redundant but harmless (correct order, no stale `dist`) and is left as is.
+
+### 22.4 Artifact assumptions
+
+- Keep the `apps/` and `packages/` layout: `apps/api/node_modules/@samvardiq/*` are `file:` links (symlinks/junctions) to `packages/*`. Deploy by building on the target, or copy in a way that preserves the links and relative layout.
+- Per project the runtime needs only `package.json`, `dist/` and the pruned `node_modules/`; `src/`, tests and scripts are not needed at runtime.
+- No `.env` is part of the artifact. Nothing in the procedure installs or reads credentials.
+
+### 22.5 Runtime environment (names only) and credential rules
+
+`DATABASE_URL` (runtime, `samvardiq_app` only), `SUPABASE_PROJECT_URL`, `PORT`, `HOST`, `NODE_ENV`, `ALLOWED_ORIGINS`, `TRUST_PROXY`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS`, `META_WEBHOOK_VERIFY_TOKEN`, `META_WHATSAPP_APP_SECRET`. `MIGRATION_DATABASE_URL` must **never** be injected into the API runtime; startup fails closed if `DATABASE_URL` is missing, malformed, equal to the migration URL, or authenticates as anything but `samvardiq_app` (§21.5, unchanged and re-verified against the pruned artifact).
+
+### 22.6 Follow-ups and remaining provider-specific proofs
+
+- **Connection capacity (deployment hardening follow-up, not changed here):** four independent `pg.Pool`s (`identity-access`, `data-foundation`, `clinic-cms-connector`, `communication-orchestration`), each created with no `max` override (`pg` default 10) → up to ~40 connections against one `DATABASE_URL`. Verify Supabase Session Pooler capacity before staging deployment.
+- Per provider still to be proven empirically: outbound TCP/TLS to the Supabase Session Pooler from the host, `PORT`/`HOST` and `TRUST_PROXY` behaviour, graceful `SIGTERM`, crash restart, health behaviour, repo-root build compatibility, and latency (Supabase staging is `ap-northeast-1`).
+- Gate 1 (hosting) remains open; Gate 2 (`samvardiq_app` credential) remains closed.

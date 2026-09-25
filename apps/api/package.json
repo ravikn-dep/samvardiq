@@ -19,7 +19,7 @@
     "premigrate:staging": "npm run build:deps",
     "migrate:staging": "node --import tsx scripts/migrateSupabaseStaging.ts"
   },
-  "devDependencies": {
+  "dependencies": {
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.1",
     "@fastify/rate-limit": "^11.2.0",
@@ -28,10 +28,12 @@
     "@samvardiq/communication-orchestration": "file:../../packages/communication-orchestration",
     "@samvardiq/data-foundation": "file:../../packages/data-foundation",
     "@samvardiq/identity-access": "file:../../packages/identity-access",
+    "fastify": "^5.12.3"
+  },
+  "devDependencies": {
     "@types/node": "^22.10.0",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.15.0",
-    "fastify": "^5.12.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.16.0"
