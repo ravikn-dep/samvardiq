@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Provider-neutral build of apps/api for this multi-package (non-workspace, ADR-HTTP-001) layout.
 //
-//   node scripts/api-runtime.mjs install   # npm ci from each lockfile, in every project apps/api needs
+//   node scripts/api-runtime.mjs install   # npm ci --include=dev from each lockfile, in every project apps/api needs
 //   node scripts/api-runtime.mjs build     # builds the sibling packages, then apps/api (npm run build)
 //   node scripts/api-runtime.mjs prune     # drop devDependencies everywhere -> production runtime tree
 //
@@ -35,7 +35,9 @@ function npm(args, dir) {
 }
 
 const commands = {
-  install: () => projects.forEach((d) => npm(['ci', '--ignore-scripts', '--no-audit', '--no-fund'], d)),
+  // --include=dev: the build needs tsc etc. even if the host sets NODE_ENV=production (npm would then omit devDependencies
+  // and exit 0, and the build fails later). Production-only trees come from `prune`, never from the install.
+  install: () => projects.forEach((d) => npm(['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], d)),
   build: () => npm(['run', 'build'], 'apps/api'),
   prune: () => projects.forEach((d) => npm(['prune', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], d)),
 };

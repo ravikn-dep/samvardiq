@@ -449,13 +449,13 @@ Everything else stays in `devDependencies`: TypeScript, ESLint, `tsx`, `embedded
 From the repository root, on a clean checkout, with only Node and npm (tested: Node 24.15.0, npm 11.12.1):
 
 ```
-node scripts/api-runtime.mjs install   # npm ci --ignore-scripts in all 8 projects, from lockfiles
+node scripts/api-runtime.mjs install   # npm ci --include=dev --ignore-scripts in all 8 projects, from lockfiles
 node scripts/api-runtime.mjs build     # npm run build in apps/api (builds the sibling packages, then the API)
 node scripts/api-runtime.mjs prune     # npm prune --omit=dev in all 8 projects
 cd apps/api && node dist/index.js      # start (no tsx, no npm at runtime)
 ```
 
-`prune` is destructive to a development checkout; run it only on a deployment build. The measured result on Windows/PowerShell from a clean copy: install ~18 s, build ~35 s, prune ~6 s; `node_modules` across all eight projects fell from 1223 MB to 62 MB. What remains is production dependencies plus `@types/pg`/`@types/node`/`undici-types` (~2.6 MB per project, type-only), kept because `drizzle-orm` declares `@types/pg` as an optional peer dependency (npm marks them `devOptional`).
+`install` passes `--include=dev` explicitly because a host that sets `NODE_ENV=production` during the build would otherwise make `npm ci` skip devDependencies (exit 0), and the build then fails for want of `tsc` (INFRA-W1D-PKG-F1). The runtime-only tree is produced by `prune`, never by the install. `prune` is destructive to a development checkout; run it only on a deployment build. The measured result on Windows/PowerShell from a clean copy: install ~18 s, build ~35 s, prune ~6 s; `node_modules` across all eight projects fell from 1223 MB to 62 MB. What remains is production dependencies plus `@types/pg`/`@types/node`/`undici-types` (~2.6 MB per project, type-only), kept because `drizzle-orm` declares `@types/pg` as an optional peer dependency (npm marks them `devOptional`).
 
 `build` re-builds sibling packages more than once because several packages have their own `prebuild`; this is redundant but harmless (correct order, no stale `dist`) and is left as is.
 

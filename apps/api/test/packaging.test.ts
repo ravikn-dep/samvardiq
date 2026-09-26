@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
@@ -70,3 +72,57 @@ for (const project of projects) {
     assert.deepEqual(leaked, []);
   });
 }
+
+/**
+ * INFRA-W1D-PKG-F1: hosts may set NODE_ENV=production during the build, and `npm ci` then silently omits
+ * devDependencies (exit 0), so the later build fails for want of tsc. Run the real script with a stub `npm`
+ * first on PATH that records each call, and check the contract: install always requests devDependencies, and
+ * the production-only tree comes solely from `prune`.
+ */
+function recordNpmCalls(command: string, nodeEnv: string | undefined): { cwd: string; args: string }[] {
+  const dir = mkdtempSync(join(tmpdir(), 'api-runtime-stub-'));
+  const log = join(dir, 'calls.log');
+  writeFileSync(join(dir, 'npm.cmd'), `@echo %CD% :: %* >> "${log}"\r\n`);
+  writeFileSync(join(dir, 'npm'), `#!/bin/sh\necho "$PWD :: $*" >> "${log}"\n`);
+  chmodSync(join(dir, 'npm'), 0o755);
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+  const env: NodeJS.ProcessEnv = { ...process.env, [pathKey]: `${dir}${delimiter}${process.env[pathKey] ?? ''}` };
+  if (nodeEnv === undefined) delete env.NODE_ENV;
+  else env.NODE_ENV = nodeEnv;
+  try {
+    const result = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'api-runtime.mjs'), command], { env, encoding: 'utf8' });
+    assert.equal(result.status, 0, `${command} exited ${result.status}: ${result.stderr}`);
+    return readFileSync(log, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        const [cwd = '', args = ''] = line.split(' :: ');
+        return { cwd: cwd.trim().replace(/\\/g, '/'), args: args.trim() };
+      });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+for (const nodeEnv of ['production', 'development', undefined]) {
+  test(`api-runtime install requests devDependencies in every project (NODE_ENV=${nodeEnv})`, () => {
+    const calls = recordNpmCalls('install', nodeEnv);
+    assert.equal(calls.length, projects.length);
+    for (const project of projects) {
+      const call = calls.find((c) => c.cwd.endsWith(`/${project}`));
+      assert.ok(call, `no npm call for ${project}`);
+      assert.match(call.args, /^ci\b/);
+      assert.match(call.args, /--include=dev\b/, `${project}: install must not depend on ambient NODE_ENV`);
+    }
+  });
+}
+
+test('api-runtime prune still produces the production-only tree (--omit=dev) in every project', () => {
+  const calls = recordNpmCalls('prune', 'production');
+  assert.equal(calls.length, projects.length);
+  for (const call of calls) {
+    assert.match(call.args, /^prune\b/);
+    assert.match(call.args, /--omit=dev\b/);
+    assert.doesNotMatch(call.args, /--include=dev/);
+  }
+});
