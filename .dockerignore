@@ -1,0 +1,14 @@
+# Allowlist: only what `scripts/api-runtime.mjs install|build` reads. Everything else (.env files, tests,
+# migrations and their runners, .git, local node_modules/dist, apps/web) stays out of the build context.
+*
+!scripts/api-runtime.mjs
+!apps/api/package.json
+!apps/api/package-lock.json
+!apps/api/tsconfig.json
+!apps/api/tsconfig.build.json
+!apps/api/src
+!packages/*/package.json
+!packages/*/package-lock.json
+!packages/*/tsconfig.json
+!packages/*/tsconfig.build.json
+!packages/*/src

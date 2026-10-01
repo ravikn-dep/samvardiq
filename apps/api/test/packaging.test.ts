@@ -117,6 +117,40 @@ for (const nodeEnv of ['production', 'development', undefined]) {
   });
 }
 
+/**
+ * INFRA-W1D-RAILWAY-G1: the root Dockerfile is the canonical container. It must build via api-runtime.mjs (not its own
+ * install logic), run one pinned Node in both stages, start non-root and in exec form, and carry no credentials. The
+ * .dockerignore is an allowlist, so .env files, tests and migrations can only enter the image by an explicit edit here.
+ */
+test('Dockerfile builds with the canonical lifecycle on one pinned Node and starts non-root', () => {
+  const dockerfile = readFileSync(join(repoRoot, 'Dockerfile'), 'utf8')
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  const froms = [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1]);
+  assert.equal(froms.length, 2);
+  assert.equal(froms[0], froms[1], 'build and runtime stages must use the same Node image');
+  assert.match(froms[0]!, /^node:24\.15\.0-bookworm-slim@sha256:[0-9a-f]{64}$/);
+  const steps = [...dockerfile.matchAll(/node scripts\/api-runtime\.mjs (\w+)/g)].map((m) => m[1]);
+  assert.deepEqual(steps, ['install', 'build', 'prune']);
+  assert.doesNotMatch(dockerfile, /npm (ci|install)\b/, 'install logic belongs to api-runtime.mjs only');
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('FROM'));
+  assert.match(runtime, /^USER node$/m);
+  assert.match(runtime, /^CMD \["node", "apps\/api\/dist\/index\.js"\]$/m);
+  assert.doesNotMatch(dockerfile, /DATABASE_URL|PASSWORD|SECRET|TOKEN|migrat/i);
+});
+
+test('.dockerignore denies everything except the sources api-runtime.mjs builds', () => {
+  const lines = readFileSync(join(repoRoot, '.dockerignore'), 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  assert.equal(lines[0], '*');
+  const files = ['package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.build.json', 'src'];
+  const expected = ['!scripts/api-runtime.mjs', ...['apps/api', 'packages/*'].flatMap((dir) => files.map((f) => `!${dir}/${f}`))];
+  assert.deepEqual(lines.slice(1).sort(), expected.sort());
+});
+
 test('api-runtime prune still produces the production-only tree (--omit=dev) in every project', () => {
   const calls = recordNpmCalls('prune', 'production');
   assert.equal(calls.length, projects.length);

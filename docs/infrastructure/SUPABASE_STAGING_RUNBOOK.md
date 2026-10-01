@@ -474,3 +474,31 @@ cd apps/api && node dist/index.js      # start (no tsx, no npm at runtime)
 - **Connection capacity (deployment hardening follow-up, not changed here):** four independent `pg.Pool`s (`identity-access`, `data-foundation`, `clinic-cms-connector`, `communication-orchestration`), each created with no `max` override (`pg` default 10) → up to ~40 connections against one `DATABASE_URL`. Verify Supabase Session Pooler capacity before staging deployment.
 - Per provider still to be proven empirically: outbound TCP/TLS to the Supabase Session Pooler from the host, `PORT`/`HOST` and `TRUST_PROXY` behaviour, graceful `SIGTERM`, crash restart, health behaviour, repo-root build compatibility, and latency (Supabase staging is `ap-northeast-1`).
 - Gate 1 (hosting) remains open; Gate 2 (`samvardiq_app` credential) remains closed.
+
+## 23. INFRA-W1D-RAILWAY-G1 — Railway staging host and provider-neutral container (Gate 1 closed; Gate 2 still closed)
+
+### 23.1 Selection
+
+Founder Gate 1 decision (2026-10-01): **Railway Hobby** hosts the staging API. Railway project `samvardiq-staging`, environment `staging`, one service `api`, region `asia-southeast1-eqsg3a` (Singapore), source `ravikn-dep/samvardiq` `main`, root directory unset. No Railway database, volume or other service. Supabase staging stays in `ap-northeast-1`, so API→DB traffic crosses regions; measure latency at Gate 2.
+
+### 23.2 Why Railpack was not usable (empirical, two deployments)
+
+Railpack detects no language provider (there is no root `package.json`, by design — ADR-HTTP-001), and in that path (Railpack source, `core/generate/context.go` `applyConfig`) each env-configured step gets only the mise layer as input:
+
+1. `RAILPACK_INSTALL_CMD` + `RAILPACK_BUILD_CMD` as separate steps → the build step never saw the install step's `node_modules`: `sh: 1: tsc: not found` (exit 127). Not an F1 regression — the install log shows `--include=dev`.
+2. A single `RAILPACK_BUILD_CMD` (install && build && prune) → build passed, but the mise layer (Node from `RAILPACK_PACKAGES`) is only added to the runtime image by a language provider: `node: command not found` at container start.
+
+Fixing either inside Railpack needs a Railpack-only `railpack.json`; the provider-neutral alternative was chosen instead.
+
+### 23.3 Canonical container (root `Dockerfile`, `.dockerignore`)
+
+- Both stages: `node:24.15.0-bookworm-slim`, pinned by multi-arch index digest (covers linux/amd64 and arm64).
+- Build stage runs the §22.3 lifecycle unchanged: `node scripts/api-runtime.mjs install && … build && … prune`. No install logic of its own.
+- Runtime stage: `NODE_ENV=production`, copies the pruned `/app` root-owned (the API writes nothing to disk), `USER node`, exec-form `CMD ["node", "apps/api/dist/index.js"]` so Node is PID 1 and receives SIGTERM directly.
+- `.dockerignore` is an allowlist: only `scripts/api-runtime.mjs` and each project's `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.build.json`, `src/`. `.env*`, tests, `drizzle/` migrations, migration scripts, `.git` and `apps/web` never enter the image — the image cannot run migrations.
+- `apps/api/test/packaging.test.ts` enforces the invariants (one pinned image, the three lifecycle steps in order, no own `npm ci`, `USER node`, the exact `CMD`, no credential/migration references, the exact allowlist).
+- Railway uses the root `Dockerfile` automatically; the `RAILPACK_*` service variables and the custom start command are then obsolete. Remaining service variables: `NODE_ENV=production`, `TRUST_PROXY=false` (proxy-header trust unproven; per-client rate limiting behind Railway's proxy is a pre-production follow-up). Health check `/health`; restart policy On Failure, max 3.
+
+### 23.4 Expected pre-Gate-2 result
+
+With no `DATABASE_URL` the container must start Node, load the pruned tree and stop at W1D: `RuntimeDatabaseIdentityError: DATABASE_URL is not set`, exit 1, then bounded restarts. The deployment is reported unhealthy because `/health` never binds — expected, not a defect. Graceful SIGTERM, Session Pooler reachability, connection capacity (§22.6, ~40 connections) and a live `/health` pass are verified after Gate 2.
