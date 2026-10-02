@@ -63,6 +63,7 @@ export function defaultTestConfig(overrides: Partial<ApiConfig> = {}): ApiConfig
     allowedOrigins: ['https://app.samvardiq.example'],
     trustProxy: false,
     rateLimit: { max: 1000, windowMs: 60_000 },
+    databasePoolMax: 3,
     ...overrides,
   };
 }

@@ -6,7 +6,7 @@
  * in identity-access reads `SUPABASE_PROJECT_URL`) and duplicating that logic
  * here would be exactly the kind of redundant config loading Ponytail flags.
  * This module only owns the config that is genuinely this app's own:
- * network binding, CORS, and rate limiting.
+ * network binding, CORS, rate limiting, and the runtime pool budget.
  */
 export interface ApiConfig {
   port: number;
@@ -20,6 +20,12 @@ export interface ApiConfig {
     max: number;
     windowMs: number;
   };
+  /**
+   * `max` for EACH of the four runtime pg pools (one per package). Budget per
+   * instance = 4 × this; keep instances × 4 × this within the database pooler's
+   * per-role pool size (staging Session Pooler: 15). Unset = 3, never pg's 10.
+   */
+  databasePoolMax: number;
 }
 
 export class ConfigError extends Error {}
@@ -59,10 +65,28 @@ function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
   throw new ConfigError(`Expected "true" or "false", got ${JSON.stringify(raw)}`);
 }
 
+/** Typo guard, not a capacity budget: the real limit is environment-specific (see `databasePoolMax`). */
+const DATABASE_POOL_MAX_CEILING = 20;
+
+function parseDatabasePoolMax(raw: string | undefined): number {
+  if (!raw) return 3;
+  // Digits only: rejects whitespace, signs, decimals, exponents and leading zeros rather than guessing intent.
+  const max = /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+  if (!(max <= DATABASE_POOL_MAX_CEILING)) {
+    throw new ConfigError(`DATABASE_POOL_MAX must be an integer between 1 and ${DATABASE_POOL_MAX_CEILING}, got ${JSON.stringify(raw)}`);
+  }
+  return max;
+}
+
 function parseNodeEnv(raw: string | undefined): ApiConfig['nodeEnv'] {
   if (raw === undefined || raw === 'development') return 'development';
   if (raw === 'production' || raw === 'test') return raw;
   throw new ConfigError(`NODE_ENV must be one of development/production/test, got ${JSON.stringify(raw)}`);
+}
+
+/** pg settings for every runtime pool: bounded, and a request waiting on an exhausted pool fails after 10 s instead of hanging. */
+export function runtimePoolConfig(config: ApiConfig): { max: number; connectionTimeoutMillis: number } {
+  return { max: config.databasePoolMax, connectionTimeoutMillis: 10_000 };
 }
 
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -76,5 +100,6 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ApiConf
       max: env.RATE_LIMIT_MAX ? Number(env.RATE_LIMIT_MAX) : 100,
       windowMs: env.RATE_LIMIT_WINDOW_MS ? Number(env.RATE_LIMIT_WINDOW_MS) : 60_000,
     },
+    databasePoolMax: parseDatabasePoolMax(env.DATABASE_POOL_MAX),
   };
 }

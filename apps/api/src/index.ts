@@ -29,7 +29,7 @@ import {
 } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
 import { DeterministicCommunicationInterpreter, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
 
-import { loadConfigFromEnv } from './config.js';
+import { loadConfigFromEnv, runtimePoolConfig } from './config.js';
 import { assertRuntimeDatabaseConfigured, assertRuntimeRole } from './runtimeDbIdentity.js';
 import { buildServer } from './server.js';
 
@@ -49,10 +49,12 @@ async function main(): Promise<void> {
   // database is missing or misconfigured (see runtimeDbIdentity.ts).
   const target = assertRuntimeDatabaseConfigured();
 
-  const identityClient = createIdentityClient();
-  const dataFoundationClient = createDataFoundationClient();
-  const clinicConnectorClient = createClinicConnectorClient();
-  const commsClient = createCommsClient();
+  // INFRA-W1D-POOL-F1: every runtime pool gets the same bounded budget (config.ts), never pg's default of 10.
+  const poolConfig = runtimePoolConfig(config);
+  const identityClient = createIdentityClient(poolConfig);
+  const dataFoundationClient = createDataFoundationClient(poolConfig);
+  const clinicConnectorClient = createClinicConnectorClient(poolConfig);
+  const commsClient = createCommsClient(poolConfig);
 
   // INFRA-W1D: authoritative, post-connection proof of who this process
   // actually connected as. All four clients read the same DATABASE_URL, so

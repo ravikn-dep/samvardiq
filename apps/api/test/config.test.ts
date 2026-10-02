@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { ConfigError, loadConfigFromEnv } from '../src/config.js';
+import { ConfigError, loadConfigFromEnv, runtimePoolConfig } from '../src/config.js';
 
 /** Section 32: fail-closed configuration. Every malformed input throws — never a silent, insecure default. */
 
@@ -48,4 +49,35 @@ test('an invalid TRUST_PROXY value fails closed', () => {
 test('TRUST_PROXY defaults to false — X-Forwarded-* is never trusted unless explicitly enabled', () => {
   const config = loadConfigFromEnv({} as NodeJS.ProcessEnv);
   assert.equal(config.trustProxy, false);
+});
+
+/** INFRA-W1D-POOL-F1: four runtime pools share DATABASE_POOL_MAX; the budget is 4 x it per instance, so it must never drift back to pg's 10. */
+test('DATABASE_POOL_MAX defaults to 3 when unset or empty — omitting it never restores 4 x 10 = 40', () => {
+  assert.equal(loadConfigFromEnv({} as NodeJS.ProcessEnv).databasePoolMax, 3);
+  assert.equal(loadConfigFromEnv({ DATABASE_POOL_MAX: '' } as unknown as NodeJS.ProcessEnv).databasePoolMax, 3);
+});
+
+test('DATABASE_POOL_MAX accepts integers 1..20', () => {
+  for (const [raw, max] of [['1', 1], ['3', 3], ['20', 20]] as const) {
+    assert.equal(loadConfigFromEnv({ DATABASE_POOL_MAX: raw } as unknown as NodeJS.ProcessEnv).databasePoolMax, max);
+  }
+});
+
+test('a malformed, zero, negative, decimal, padded or oversized DATABASE_POOL_MAX fails closed', () => {
+  for (const raw of ['abc', '0', '-1', '2.5', '3.0', '1e1', ' 3', '3 ', '03', '+3', '21', '1000', '0x10']) {
+    assert.throws(() => loadConfigFromEnv({ DATABASE_POOL_MAX: raw } as unknown as NodeJS.ProcessEnv), ConfigError, JSON.stringify(raw));
+  }
+});
+
+test('runtimePoolConfig carries the budget and a finite acquisition timeout', () => {
+  const pool = runtimePoolConfig(loadConfigFromEnv({ DATABASE_POOL_MAX: '3' } as unknown as NodeJS.ProcessEnv));
+  assert.deepEqual(pool, { max: 3, connectionTimeoutMillis: 10_000 });
+});
+
+test('the composition root gives every runtime pool the bounded config (no pool falls back to pg defaults)', () => {
+  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+  const calls = [...source.matchAll(/\bcreate\w*Client\(([^)]*)\)/g)].map((m) => m[1]);
+  assert.deepEqual(calls, ['poolConfig', 'poolConfig', 'poolConfig', 'poolConfig']);
+  assert.match(source, /const poolConfig = runtimePoolConfig\(config\);/);
+  assert.doesNotMatch(source, /new Pool\(/);
 });

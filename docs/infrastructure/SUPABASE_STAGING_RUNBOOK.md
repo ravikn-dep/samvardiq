@@ -502,3 +502,24 @@ Fixing either inside Railpack needs a Railpack-only `railpack.json`; the provide
 ### 23.4 Expected pre-Gate-2 result
 
 With no `DATABASE_URL` the container must start Node, load the pruned tree and stop at W1D: `RuntimeDatabaseIdentityError: DATABASE_URL is not set`, exit 1, then bounded restarts. The deployment is reported unhealthy because `/health` never binds — expected, not a defect. Graceful SIGTERM, Session Pooler reachability, connection capacity (§22.6, ~40 connections) and a live `/health` pass are verified after Gate 2.
+
+## 24. INFRA-W1D-POOL-F1 — Runtime pool capacity (Gate 2 paused until this closed)
+
+### 24.1 Verified staging capacity (Founder dashboard evidence, 2026-10-02)
+
+Compute **Nano** (shared, 0.5 GB), `ap-northeast-1`. Session Pooler (port 5432, database `postgres`): **pool size 15**, max client connections 200; database showed ~6/60 connections. Supavisor's pool size is per database + role, so `samvardiq_app` gets its own 15 backend connections. In session mode each client holds one backend connection, and a client beyond the pool size is refused (`EMAXCONNSESSION`), not queued. The 200 client limit is not backend capacity, and 60 is the database-wide `max_connections` for all roles.
+
+### 24.2 Runtime pools and budget
+
+`apps/api` creates exactly four `pg` pools (identity-access, data-foundation, clinic-cms-connector, communication-orchestration), once each at startup, all on `DATABASE_URL`, lazy, closed together on SIGTERM/SIGINT. They stay separate (each package owns its client). No code path holds two clients of the same pool at once (every transaction uses only its own `tx`), so a small `max` queues but cannot deadlock.
+
+Before: 1 instance × 4 pools × pg default 10 = **40** > 15.
+After: `DATABASE_POOL_MAX` (server-side, integer 1..20, default **3**; malformed, zero, negative, decimal, padded or >20 fails startup) applies to all four pools, with a 10 s acquisition timeout so an exhausted pool fails a request instead of hanging. Staging: 1 instance × 4 × 3 = **12** ≤ 15 (3 spare). Requests beyond `max` queue inside `pg`.
+
+Budget rule for any environment: `instances × 4 × DATABASE_POOL_MAX ≤ pooler pool size for samvardiq_app`, minus headroom for operator/proof sessions as `samvardiq_app`. Railway briefly overlaps old and new deployments: the worst case is 2 × 12 = 24, but the new instance holds only its W1D identity check (one connection, released when idle) until it is active, and idle pool connections close after 10 s. More replicas need a lower `DATABASE_POOL_MAX` (e.g. 2 replicas → 1) or a larger pool size. Admin/migration sessions use the `postgres` role's own pool, not this budget.
+
+### 24.3 Carried into Gate 2
+
+- Set `DATABASE_POOL_MAX=3` explicitly in Railway alongside `DATABASE_URL`.
+- Railway defaults to 0 s between SIGTERM and SIGKILL (`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`), which cuts graceful shutdown short; set a drain period (e.g. 10 s) at Gate 2.
+- Database-wide "Enforce SSL on incoming connections" is **off** (not changed). Gate 2 must prove the runtime and admin sessions negotiate TLS; **database-wide SSL enforcement = pre-production hardening review**.
