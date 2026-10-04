@@ -542,3 +542,29 @@ Approved trust anchor (public certificate, verified against the live pooler chai
 - Container: **`/app/certs/supabase-root-2021.crt`** (build stage `COPY . .` into `/app`, runtime stage copies `/app`; root-owned, read-only to `node`)
 
 `apps/api/test/packaging.test.ts` pins the fingerprint and the copy path, so a substituted or dropped certificate fails the build's tests. The Railway `DATABASE_URL` must use `sslrootcert=/app/certs/supabase-root-2021.crt`; a workstation path (e.g. under `C:\Users\…`) is never valid in a Railway URL. Before 2031-04-26 obtain Supabase's successor CA and repeat this verification. Database-wide "Enforce SSL" stays a separate pre-production review (§24.3).
+
+## 26. INFRA-W1D closure — Railway staging runtime active (2026-10-04)
+
+**Status: INFRA-W1D canonical stable for staging. Production is not authorized and not deployed.**
+
+| Fact | Value / evidence |
+|---|---|
+| Target | Railway `samvardiq-staging` / `staging` / `api`, Singapore, root `Dockerfile` build, source `ravikn-dep/samvardiq` `main` |
+| Deployed source | `3ce466ebbbc5451185216e1fec55a71365e983d0` (reported from inside the running container) |
+| Service variables (names only) | `DATABASE_URL`, `DATABASE_POOL_MAX`, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, `NODE_ENV`, `TRUST_PROXY`, `SUPABASE_PROJECT_URL`, `META_WEBHOOK_VERIFY_TOKEN`. **`MIGRATION_DATABASE_URL` absent**; no owner/admin credential, no `service_role` or anon key |
+| Runtime identity | W1D startup check: `Runtime DB identity confirmed … role=samvardiq_app`; in-container probe: `current_user = session_user = samvardiq_app`, super/createdb/createrole/bypassrls/replication all false |
+| Database TLS | Session Pooler, `sslmode=verify-full`, CA `/app/certs/supabase-root-2021.crt` (fingerprint approved, §25.2); in-container probe: TLSv1.3, encrypted, certificate verified, server `*.pooler.supabase.com` (hostname verified by verify-full) |
+| Pool budget | `DATABASE_POOL_MAX=3` × 4 pools = 12 ≤ Session Pooler pool size 15 (§24); idle Railway runtime held 0 `samvardiq_app` sessions |
+| Identity provider | `SUPABASE_PROJECT_URL` only: issuer `<url>/auth/v1` and public JWKS (ES256). The API reads no Supabase API key |
+| Health | Railway `GET /health` → 200; deployment ACTIVE; app listens on Railway's `PORT` (8080) |
+| Shutdown | One controlled redeploy: Railway `sending signal SIGTERM to container` → app `shutting down`, `signal: SIGTERM` → old deployment Removed; `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=10` |
+| Final database audit (admin, verify-full) | Structure 14/14 incl. D1 (307 catalog items identical); `samvardiq_app` authority fingerprint unchanged from Gate 2 (LOGIN, no dangerous attributes, no settings, no owned objects, 46 grants, only Supabase's `postgres` ADMIN edge, 12 forced + 4 platform RLS tables, 18 policies); all 16 tables empty |
+
+The temporary in-container probe ran once over `railway ssh` and was removed; it is not part of the repository or the image. The application process runs as `USER node` per the `Dockerfile`; the `railway ssh` shell is a separate root session.
+
+Operations:
+
+- **Rotate the runtime credential:** run the Gate 2 password step again for the existing `samvardiq_app` (client-side SCRAM verifier, before/after fingerprint must match), put the new URL (with `sslrootcert=/app/certs/supabase-root-2021.crt`) into Railway `DATABASE_URL`, redeploy, confirm the W1D identity log line; the old password stops authenticating immediately.
+- **Admin/migration access** stays operator-supplied per session (§12): `MIGRATION_DATABASE_URL` with `sslmode=verify-full&sslrootcert=<local CA path>`, set in the operator's own shell, never stored in Railway or the repository.
+
+Deferred (not W1D blockers): WhatsApp empty-token handshake fix (approved; Railway sets a non-empty `META_WEBHOOK_VERIFY_TOKEN` meanwhile); reduce host detail in the W1D identity log line; database-wide SSL enforcement (pre-production review); `service_role` narrowing; Data API exposed-schema decision; Supabase Auth setup; per-client rate limiting behind Railway's proxy; dev-only `brace-expansion` advisory; production infrastructure.
