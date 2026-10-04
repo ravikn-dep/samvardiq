@@ -523,3 +523,22 @@ Budget rule for any environment: `instances × 4 × DATABASE_POOL_MAX ≤ pooler
 - Set `DATABASE_POOL_MAX=3` explicitly in Railway alongside `DATABASE_URL`.
 - Railway defaults to 0 s between SIGTERM and SIGKILL (`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`), which cuts graceful shutdown short; set a drain period (e.g. 10 s) at Gate 2.
 - Database-wide "Enforce SSL on incoming connections" is **off** (not changed). Gate 2 must prove the runtime and admin sessions negotiate TLS; **database-wide SSL enforcement = pre-production hardening review**.
+
+## 25. INFRA-W1D Gate 2 (local) and runtime TLS trust anchor
+
+### 25.1 Local Gate 2 result (2026-10-04)
+
+The existing `samvardiq_app` received a runtime password (locally generated, 256-bit; only a client-computed SCRAM-SHA-256 verifier was sent). No other role, attribute, membership, grant, RLS or policy changed: the sanitized authority fingerprint was identical before, after and at the end. Proofs as the real `samvardiq_app` login over the Session Pooler: `current_user = session_user = samvardiq_app`; 22/22 privilege-escalation attempts denied (42501); behavioural suite B0–B15 16/16; RLS/pool leakage (A, B, none, A, cross-writes, aborted transaction, 5 × 20 concurrent) zero leakage; synthetic data removed (tables empty); structure audit 14/14 before and after. Baseline note: Supabase's own membership edge (`postgres` holds ADMIN on `samvardiq_app`, granted by `supabase_admin`, no INHERIT/SET) is expected. Railway runtime activation is still pending.
+
+### 25.2 TLS: verify-full only
+
+The Session Pooler presents `*.pooler.supabase.com` → Supabase Intermediate 2021 CA → **Supabase Root 2021 CA**, a private root that Node does not trust by default. With `pg` 8.23, `sslmode=require` already means `verify-full`, so the connection needs the root explicitly: `sslmode=verify-full&sslrootcert=<path>`. Encrypted-but-unverified modes (`no-verify`, `uselibpqcompat=true&sslmode=require`) and URLs without `sslmode` (plaintext) are not acceptable. Every staging connection string, admin and runtime, carries both parameters.
+
+Approved trust anchor (public certificate, verified against the live pooler chain with hostname verification):
+
+- Subject `CN=Supabase Root 2021 CA, O=Supabase Inc`, self-signed CA, valid 2021-04-28 → 2031-04-26
+- SHA-256 `80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`
+- Repository: `certs/supabase-root-2021.crt` (allowlisted in `.dockerignore`)
+- Container: **`/app/certs/supabase-root-2021.crt`** (build stage `COPY . .` into `/app`, runtime stage copies `/app`; root-owned, read-only to `node`)
+
+`apps/api/test/packaging.test.ts` pins the fingerprint and the copy path, so a substituted or dropped certificate fails the build's tests. The Railway `DATABASE_URL` must use `sslrootcert=/app/certs/supabase-root-2021.crt`; a workstation path (e.g. under `C:\Users\…`) is never valid in a Railway URL. Before 2031-04-26 obtain Supabase's successor CA and repeat this verification. Database-wide "Enforce SSL" stays a separate pre-production review (§24.3).

@@ -2,6 +2,8 @@
 # migrations and their runners, .git, local node_modules/dist, apps/web) stays out of the build context.
 *
 !scripts/api-runtime.mjs
+# Public Supabase root CA for verify-full database TLS; lands at /app/certs/supabase-root-2021.crt.
+!certs/supabase-root-2021.crt
 !apps/api/package.json
 !apps/api/package-lock.json
 !apps/api/tsconfig.json
