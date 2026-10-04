@@ -48,12 +48,32 @@ describe('GET /webhooks/meta/whatsapp — verification handshake', () => {
     const response = await world.app.inject({ method: 'GET', url: '/webhooks/meta/whatsapp?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=12345' });
     assert.equal(response.statusCode, 403);
   });
+
+  it('SEC-F1: rejects an empty or absent verify token, a wrong mode, and missing parameters, without echoing the challenge', async () => {
+    for (const query of [
+      'hub.mode=subscribe&hub.verify_token=&hub.challenge=12345',
+      'hub.mode=subscribe&hub.challenge=12345',
+      'hub.mode=unsubscribe&hub.verify_token=test-verify-token&hub.challenge=12345',
+      'hub.verify_token=test-verify-token&hub.challenge=12345',
+      'hub.mode=subscribe&hub.verify_token=test-verify-token&hub.challenge=',
+      '',
+    ]) {
+      const response = await world.app.inject({ method: 'GET', url: `/webhooks/meta/whatsapp?${query}` });
+      assert.equal(response.statusCode, 403, query);
+      assert.ok(!response.body.includes('12345') && !response.body.includes('test-verify-token'), query);
+    }
+  });
 });
 
 describe('POST /webhooks/meta/whatsapp', () => {
   it('A/B: rejects an invalid signature with 401, before any processing', async () => {
     const body = textPayload('hello');
     const response = await world.app.inject({ method: 'POST', url: '/webhooks/meta/whatsapp', payload: body, headers: { 'content-type': 'application/json', 'x-hub-signature-256': sign(body) + 'tampered' } });
+    assert.equal(response.statusCode, 401);
+  });
+
+  it('SEC-F1 H: rejects a POST with no signature header with 401', async () => {
+    const response = await world.app.inject({ method: 'POST', url: '/webhooks/meta/whatsapp', payload: textPayload('hello'), headers: { 'content-type': 'application/json' } });
     assert.equal(response.statusCode, 401);
   });
 

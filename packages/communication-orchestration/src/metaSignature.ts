@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 /**
  * Verified against current official Meta documentation (developers.facebook.com,
@@ -25,9 +25,18 @@ export function verifyMetaWebhookSignature(rawBody: string, signatureHeader: str
  * 'subscribe'` and `hub.verify_token` matches the configured token —
  * otherwise reject. Returns the challenge string to echo back, or `null` if
  * the handshake should be rejected.
+ *
+ * CLINIC-W2-SEC-F1: fails closed when no usable token is configured (an unset
+ * META_WEBHOOK_VERIFY_TOKEN arrives as ''), so an empty `hub.verify_token`
+ * can never match. Configured tokens are compared exactly (never trimmed),
+ * in constant time over SHA-256 digests so neither content nor length leaks.
  */
 export function verifyMetaWebhookHandshake(query: { 'hub.mode'?: string; 'hub.verify_token'?: string; 'hub.challenge'?: string }, verifyToken: string): string | null {
+  if (!verifyToken?.trim()) return null;
   if (query['hub.mode'] !== 'subscribe') return null;
-  if (query['hub.verify_token'] !== verifyToken) return null;
-  return query['hub.challenge'] ?? null;
+  const challenge = query['hub.challenge'];
+  if (!challenge) return null;
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  if (!timingSafeEqual(digest(query['hub.verify_token'] ?? ''), digest(verifyToken))) return null;
+  return challenge;
 }
