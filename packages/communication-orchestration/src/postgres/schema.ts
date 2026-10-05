@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, jsonb, pgTable, primaryKey, text, timestamp, unique } from 'drizzle-orm/pg-core';
+import { boolean, check, foreignKey, index, jsonb, pgTable, primaryKey, text, timestamp, unique } from 'drizzle-orm/pg-core';
 
 /**
  * Physical PostgreSQL schema (CLINIC-W2B). `conversations`,
@@ -32,7 +32,8 @@ import { boolean, check, jsonb, pgTable, primaryKey, text, timestamp, unique } f
  * is ever stored, always with a `purge_after` value, never indefinitely.
  *
  * RLS, the runtime role, and grants are NOT expressible in Drizzle's schema
- * DSL and are not generated from this file — see drizzle/0001_rls_and_roles.sql.
+ * DSL and are not generated from this file — see drizzle/0001_rls_and_roles.sql
+ * and drizzle/0002_*.sql (CLINIC-W2D).
  */
 
 export const communicationChannels = pgTable(
@@ -73,6 +74,9 @@ export const conversations = pgTable(
     activeAppointmentId: text('active_appointment_id'),
     handoffTrigger: text('handoff_trigger'),
     handoffAt: timestamp('handoff_at', { withTimezone: true }),
+    // CLINIC-W2D: the one current human owner of a claimed handoff.
+    handoffOwnerIdentityId: text('handoff_owner_identity_id'),
+    handoffClaimedAt: timestamp('handoff_claimed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -80,6 +84,49 @@ export const conversations = pgTable(
     primaryKey({ columns: [table.organizationId, table.conversationId] }),
     unique('conversations_channel_contact_unique').on(table.organizationId, table.channelId, table.externalContactId),
     check('conversations_state_check', sql`${table.state} IN ('AI_ACTIVE','HUMAN_HANDOFF_REQUESTED','HUMAN_ACTIVE','WAITING_FOR_PATIENT','RESOLVED','CLOSED')`),
+    // An owner exists exactly while the handoff is claimed: never an owner without HUMAN_ACTIVE, never HUMAN_ACTIVE without one.
+    check(
+      'conversations_handoff_owner_check',
+      sql`(${table.state} = 'HUMAN_ACTIVE') = (${table.handoffOwnerIdentityId} IS NOT NULL AND ${table.handoffClaimedAt} IS NOT NULL)
+          AND (${table.handoffOwnerIdentityId} IS NULL) = (${table.handoffClaimedAt} IS NULL)`,
+    ),
+  ],
+);
+
+/**
+ * CLINIC-W2D: the architecture-approved (section 23) append-only handoff log.
+ * Identifiers and operational metadata only — never message text, phone
+ * numbers or clinical content. Immutability (grants + trigger) and RLS live
+ * in drizzle/0002_*.sql.
+ */
+export const conversationHandoffs = pgTable(
+  'conversation_handoffs',
+  {
+    organizationId: text('organization_id').notNull(),
+    handoffId: text('handoff_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    eventType: text('event_type').notNull(),
+    actorIdentityId: text('actor_identity_id').notNull(),
+    actorPrincipalType: text('actor_principal_type').notNull(),
+    outcome: text('outcome'),
+    handoffTrigger: text('handoff_trigger'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.handoffId] }),
+    foreignKey({ columns: [table.organizationId, table.conversationId], foreignColumns: [conversations.organizationId, conversations.conversationId] }),
+    check('conversation_handoffs_event_type_check', sql`${table.eventType} IN ('CLAIMED','RESOLVED','REOPENED')`),
+    check('conversation_handoffs_actor_check', sql`${table.actorPrincipalType} IN ('human','service')`),
+    // RESOLVED always carries an outcome and nothing else does; staff events are human, a reopen is caused by an inbound event.
+    check(
+      'conversation_handoffs_outcome_check',
+      sql`(${table.eventType} = 'RESOLVED') = (${table.outcome} IS NOT NULL) AND (${table.outcome} IS NULL OR ${table.outcome} IN ('RETURN_TO_AI','CLOSE'))`,
+    ),
+    check(
+      'conversation_handoffs_actor_semantics_check',
+      sql`(${table.eventType} = 'REOPENED') = (${table.actorPrincipalType} = 'service')`,
+    ),
+    index('conversation_handoffs_conversation_idx').on(table.organizationId, table.conversationId, table.occurredAt),
   ],
 );
 

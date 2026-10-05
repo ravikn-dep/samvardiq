@@ -15,3 +15,4 @@ export * from './webhookIngressService.js';
 export * from './retention.js';
 export * from './provisioning.js';
 export * from './humanHandoffReadService.js';
+export * from './humanHandoffManagementService.js';

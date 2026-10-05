@@ -60,7 +60,9 @@ class FakeConnector implements ClinicOperationsConnector {
   async createEnquiry(_input: CreateEnquiryInput & IdempotentOperation): Promise<EnquiryReference> {
     return { externalEnquiryId: 'ENQ-1', externalPatientId: 'PAT-1' };
   }
-  async createAppointment(_input: CreateAppointmentInput & IdempotentOperation): Promise<Appointment> {
+  appointmentIdempotencyKeys: string[] = [];
+  async createAppointment(input: CreateAppointmentInput & IdempotentOperation): Promise<Appointment> {
+    this.appointmentIdempotencyKeys.push(input.idempotencyKey);
     if (this.createAppointmentError) throw this.createAppointmentError;
     return { externalAppointmentId: 'APT-1', externalPatientId: 'PAT-1', externalConsultantId: '7', appointmentDate: '2026-08-13', appointmentTime: '09:00', duration: 30, status: 'Scheduled', checkedInAt: null };
   }
@@ -305,4 +307,92 @@ test('the persisted message metadata never contains the raw patient text (only t
   const conversation = await deps.conversations.getByExternalContact('org-A', 'chan-1', contact);
   const messages = await deps.messages.listByConversation('org-A', conversation!.conversationId);
   assert.equal(JSON.stringify(messages).includes('this is patient free text'), false);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// CLINIC-W2D — handoff lifecycle through the real orchestrator (Founder decisions W2D-01/02).
+// ---------------------------------------------------------------------------------------------------------------
+
+const CONTACT = '919876511111';
+const inbound = (text: string, id: string) => ({ externalChannelId: 'phone-1', externalContactId: CONTACT, externalMessageId: id, text });
+
+/** Drives a real booking to CONFIRMED, then a second booking request hands off (BOOKING_ALREADY_IN_PROGRESS), then staff claim it. */
+async function confirmedThenClaimed() {
+  const world = await buildWorld();
+  world.connector.patients = [{ externalPatientId: 'PAT-1', displayName: 'Anita Rao' }];
+  await handleInboundTextEvent(world.deps, world.channel, world.context, inbound('appointment with Dr Deepthi tomorrow', 'wamid.w2d.1'));
+  await handleInboundTextEvent(world.deps, world.channel, world.context, inbound('appointment with Dr Deepthi tomorrow', 'wamid.w2d.2'));
+  const handedOff = (await world.deps.conversations.getByExternalContact('org-A', 'chan-1', CONTACT))!;
+  assert.equal(handedOff.state, 'HUMAN_HANDOFF_REQUESTED');
+  const claim = await world.deps.conversations.claimHumanHandoff('org-A', handedOff.conversationId, 'staff-1');
+  assert.equal(claim.kind, 'CLAIMED');
+  return { ...world, conversationId: handedOff.conversationId };
+}
+
+test('W2D S/T/AB: RETURN_TO_AI starts a fresh journey — old idempotency key cleared, history kept, next booking uses a NEW key', async () => {
+  const { deps, channel, context, connector, conversationId } = await confirmedThenClaimed();
+  const firstKey = connector.appointmentIdempotencyKeys[0]!;
+  const before = (await deps.conversations.getById('org-A', conversationId))!;
+  assert.equal(firstKey, `${before.bookingIdempotencyKey}:appointment`, 'the CMS key derives from the conversation key');
+
+  const result = await deps.conversations.resolveHumanHandoff('org-A', conversationId, 'staff-1', 'RETURN_TO_AI');
+  assert.equal(result.kind, 'RESOLVED');
+  const reset = (await deps.conversations.getById('org-A', conversationId))!;
+  assert.equal(reset.state, 'AI_ACTIVE');
+  assert.equal(reset.bookingState, 'NEW');
+  for (const field of ['bookingIdempotencyKey', 'bookingConsultantId', 'bookingDate', 'bookingSlot', 'handoffTrigger', 'handoffAt', 'handoffOwnerIdentityId', 'handoffClaimedAt'] as const) {
+    assert.equal(reset[field], undefined, `${field} must be reset`);
+  }
+  // AB: completed business records and the confirmed patient identity survive.
+  assert.equal(reset.externalPatientId, 'PAT-1');
+  assert.equal(reset.activeEnquiryId, 'ENQ-1');
+  assert.equal(reset.activeAppointmentId, 'APT-1');
+
+  // T: the AI books again — a deliberate new booking with a fresh key, never a replay of the first operation.
+  await handleInboundTextEvent(deps, channel, context, inbound('appointment with Dr Deepthi tomorrow', 'wamid.w2d.3'));
+  assert.equal(connector.appointmentIdempotencyKeys.length, 2);
+  assert.notEqual(connector.appointmentIdempotencyKeys[1], firstKey);
+  assert.equal((await deps.conversations.getById('org-A', conversationId))!.bookingState, 'CONFIRMED');
+});
+
+test('W2D W/Y + safety regression: a CLOSED conversation reopens on the next inbound message and processes it normally (not silently stored)', async () => {
+  const { deps, channel, context, provider, connector, conversationId } = await confirmedThenClaimed();
+  assert.equal((await deps.conversations.resolveHumanHandoff('org-A', conversationId, 'staff-1', 'CLOSE')).kind, 'RESOLVED');
+  assert.equal((await deps.conversations.getById('org-A', conversationId))!.state, 'CLOSED');
+  const sentBefore = provider.sent.length;
+
+  await handleInboundTextEvent(deps, channel, context, inbound('appointment with Dr Deepthi tomorrow', 'wamid.w2d.4'));
+
+  const after = (await deps.conversations.getById('org-A', conversationId))!;
+  assert.equal(after.bookingState, 'CONFIRMED', 'the reopened message went through the full booking pipeline');
+  assert.equal(connector.appointmentIdempotencyKeys.length, 2);
+  assert.ok(provider.sent.length > sentBefore, 'the patient got a reply — the message was not silently stored');
+  const reopened = (await deps.conversations.listHandoffEvents('org-A', conversationId)).filter((e) => e.eventType === 'REOPENED');
+  assert.equal(reopened.length, 1);
+  assert.deepEqual({ actor: reopened[0]!.actorIdentityId, type: reopened[0]!.actorPrincipalType }, { actor: context.identityId, type: 'service' });
+});
+
+test('W2D Y: after reopening, an escalating message reaches the ordinary policy and hands off to staff again', async () => {
+  const { deps, channel, context, provider, conversationId } = await confirmedThenClaimed();
+  await deps.conversations.resolveHumanHandoff('org-A', conversationId, 'staff-1', 'CLOSE');
+
+  // The deterministic interpreter classifies this as UNKNOWN; the policy clarifies once, then hands off.
+  await handleInboundTextEvent(deps, channel, context, inbound('my chest hurts what do I do', 'wamid.w2d.5'));
+  const clarified = (await deps.conversations.getById('org-A', conversationId))!;
+  assert.equal(clarified.state, 'AI_ACTIVE');
+  assert.match(provider.sent.at(-1)!.text, /consultant and which date/);
+  await handleInboundTextEvent(deps, channel, context, inbound('please help', 'wamid.w2d.6'));
+  const escalated = (await deps.conversations.getById('org-A', conversationId))!;
+  assert.equal(escalated.state, 'HUMAN_HANDOFF_REQUESTED');
+  assert.equal(escalated.handoffTrigger, 'UNKNOWN_AFTER_CLARIFICATION');
+});
+
+test('W2D V: reads never reopen a CLOSED conversation', async () => {
+  const { deps, conversationId } = await confirmedThenClaimed();
+  await deps.conversations.resolveHumanHandoff('org-A', conversationId, 'staff-1', 'CLOSE');
+  await deps.conversations.getById('org-A', conversationId);
+  await deps.conversations.getByExternalContact('org-A', 'chan-1', CONTACT);
+  await deps.conversations.listHumanHandoffs('org-A', { limit: 10 });
+  assert.equal((await deps.conversations.getById('org-A', conversationId))!.state, 'CLOSED');
+  assert.equal((await deps.conversations.listHandoffEvents('org-A', conversationId)).filter((e) => e.eventType === 'REOPENED').length, 0);
 });

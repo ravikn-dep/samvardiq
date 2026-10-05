@@ -30,7 +30,7 @@ import { PostgresClinicCmsConnectionRepository, PostgresConnectorAuditRepository
 import { PostgresCommunicationChannelRepository, PostgresConversationRepository, PostgresMessageContentRepository, PostgresMessageRepository, PostgresWebhookEventDedupRepository, createPostgresClient as createComms } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
 import { computePurgeAfter } from '@samvardiq/communication-orchestration';
 
-import { EXPECTED_TABLES, TENANT_TABLES } from './structureChecks.js';
+import { EXPECTED_TABLES, EXPECTED_TRIGGERS, TENANT_TABLES } from './structureChecks.js';
 import { Reporter, sanitizeError, type AdminPostgres } from './stagingDb.js';
 
 type Pool = AdminPostgres['pool'];
@@ -106,7 +106,7 @@ async function assertOnlySynthetic(admin: AdminPostgres): Promise<void> {
   const probes: [string, string][] = [
     ['organizations', 'organization_id'], ['goals', 'organization_id'], ['recommendations', 'organization_id'], ['approval_requests', 'organization_id'], ['approval_records', 'organization_id'],
     ['organization_memberships', 'organization_id'], ['identity_audit_events', 'coalesce(organization_id, target_id)'], ['clinic_cms_connections', 'organization_id'], ['clinic_cms_connector_evidence', 'organization_id'],
-    ['conversations', 'organization_id'], ['communication_messages', 'organization_id'], ['communication_message_content', 'organization_id'], ['communication_channels', 'organization_id'],
+    ['conversations', 'organization_id'], ['conversation_handoffs', 'organization_id'], ['communication_messages', 'organization_id'], ['communication_message_content', 'organization_id'], ['communication_channels', 'organization_id'],
     ['identities', 'identity_id'], ['identity_provider_links', 'identity_id'], ['webhook_event_dedup', 'external_event_id'],
   ];
   assert.equal(probes.length, EXPECTED_TABLES.length);
@@ -125,7 +125,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     for (const table of EXPECTED_TABLES) if ((await countRows(admin.pool, table)) > 0) populated.push(table);
     assert.deepEqual(populated, [], 'refusing to write: tables already hold data');
     empty = true;
-    return '16/16 tables empty';
+    return `${EXPECTED_TABLES.length}/${EXPECTED_TABLES.length} tables empty`;
   });
   if (!empty) return;
 
@@ -421,11 +421,18 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       assert.deepEqual((await conversations.listHumanHandoffs(ORG_B, { limit: 20 })).items.map((c) => c.conversationId), ['w1b-conv-B-h1'], 'B sees only its own handoff');
       const noContext = await comms.pool.query(`select 1 from conversations where state = 'HUMAN_HANDOFF_REQUESTED'`);
       assert.equal(noContext.rows.length, 0, 'no context: the handoff rows are invisible');
-      return 'A: 2 handoffs in 2 pages (AI_ACTIVE conversation excluded); B: 1; no-context: 0';
+      // CLINIC-W2D as the runtime role: atomic claim, still listed with its owner, audited; org B cannot reach A's handoff.
+      assert.equal((await conversations.claimHumanHandoff(ORG_B, 'w1b-conv-A-h1', 'w1b-staff-B')).kind, 'NOT_FOUND', 'cross-org claim');
+      assert.equal((await conversations.claimHumanHandoff(ORG_A, 'w1b-conv-A-h1', 'w1b-staff-A')).kind, 'CLAIMED');
+      assert.equal((await conversations.claimHumanHandoff(ORG_A, 'w1b-conv-A-h1', 'w1b-staff-A2')).kind, 'CONFLICT');
+      const claimedRow = (await conversations.listHumanHandoffs(ORG_A, { limit: 20 })).items.find((c) => c.conversationId === 'w1b-conv-A-h1');
+      assert.deepEqual([claimedRow?.state, claimedRow?.handoffOwnerIdentityId], ['HUMAN_ACTIVE', 'w1b-staff-A']);
+      assert.deepEqual((await conversations.listHandoffEvents(ORG_A, 'w1b-conv-A-h1')).map((e) => [e.eventType, e.actorIdentityId]), [['CLAIMED', 'w1b-staff-A']]);
+      return 'A: 2 handoffs in 2 pages (AI_ACTIVE conversation excluded); B: 1; no-context: 0; W2D claim: one owner, audited, cross-org NOT_FOUND';
     });
 
     // ---- missing organization context ------------------------------------------------------------------------------
-    await reporter.check('B12 missing-context fail-closed: all 12 populated tenant tables return zero rows with no context, and writes are rejected', async () => {
+    await reporter.check(`B12 missing-context fail-closed: all ${TENANT_TABLES.length} populated tenant tables return zero rows with no context, and writes are rejected`, async () => {
       const allPools = Object.values(pools);
       for (const table of TENANT_TABLES) {
         assert.ok((await countRows(admin.pool, table)) > 0, `${table}: populated (else this proof is vacuous)`);
@@ -452,7 +459,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
 
     await reporter.check('B13 synthetic-data-only: every persisted row belongs to a w1b- synthetic identifier', async () => {
       await assertOnlySynthetic(admin);
-      return '16/16 tables contain only w1b- values';
+      return `${EXPECTED_TABLES.length}/${EXPECTED_TABLES.length} tables contain only w1b- values`;
     });
 
     await reporter.check('B14 runtime-role integrity: no pooled session ever failed to switch to samvardiq_app', async () => {
@@ -468,8 +475,8 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       await admin.pool.query(`TRUNCATE TABLE ${EXPECTED_TABLES.map((t) => `public.${t}`).join(', ')}`);
       for (const table of EXPECTED_TABLES) assert.equal(await countRows(admin.pool, table), 0, `${table}: empty after cleanup`);
       const triggers = await admin.pool.query(`select count(*)::int as n from pg_trigger tg join pg_class c on c.oid = tg.tgrelid join pg_namespace ns on ns.oid = c.relnamespace where ns.nspname = 'public' and not tg.tgisinternal and tg.tgenabled = 'O'`);
-      assert.equal(Number((triggers.rows[0] as { n: number }).n), 3);
-      return '16/16 tables empty; 3/3 triggers enabled';
+      assert.equal(Number((triggers.rows[0] as { n: number }).n), EXPECTED_TRIGGERS.length);
+      return `${EXPECTED_TABLES.length}/${EXPECTED_TABLES.length} tables empty; ${EXPECTED_TRIGGERS.length}/${EXPECTED_TRIGGERS.length} triggers enabled`;
     });
   }
 }

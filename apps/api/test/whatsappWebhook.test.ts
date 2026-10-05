@@ -72,6 +72,29 @@ describe('POST /webhooks/meta/whatsapp', () => {
     assert.equal(response.statusCode, 401);
   });
 
+  it('CLINIC-W2D X: a CLOSED conversation reopens on a new inbound event, and a duplicate delivery of that event reopens nothing more', async () => {
+    await provisionCommunicationChannel(
+      { identities: world.identities, providerLinks: world.providerLinks, memberships: world.memberships, channels: world.channels },
+      { channelId: 'chan-1', organizationId: 'org-A', externalChannelId: 'phone-1', displayPhoneNumber: '+911234567890', timezone: 'Asia/Kolkata', accessTokenReference: 'env:TOKEN' },
+    );
+    await world.organizations.create({ organizationId: 'org-A', organizationType: 'clinic', name: 'org-A' });
+    const now = new Date().toISOString();
+    await world.conversations.create({
+      conversationId: 'conv-closed', organizationId: 'org-A', channelId: 'chan-1', externalContactId: '919876543210',
+      state: 'CLOSED', preferredLanguage: 'en-IN', bookingState: 'NEW', createdAt: now, updatedAt: now,
+    });
+
+    const body = textPayload('hello again', 'wamid.reopen-1');
+    for (let delivery = 0; delivery < 2; delivery += 1) {
+      const response = await world.app.inject({ method: 'POST', url: '/webhooks/meta/whatsapp', payload: body, headers: { 'content-type': 'application/json', 'x-hub-signature-256': sign(body) } });
+      assert.equal(response.statusCode, 200);
+    }
+
+    assert.equal((await world.conversations.getById('org-A', 'conv-closed'))!.state, 'AI_ACTIVE');
+    const events = await world.conversations.listHandoffEvents('org-A', 'conv-closed');
+    assert.deepEqual(events.map((e) => [e.eventType, e.actorPrincipalType]), [['REOPENED', 'service']]);
+  });
+
   it('SEC-F1 H: rejects a POST with no signature header with 401', async () => {
     const response = await world.app.inject({ method: 'POST', url: '/webhooks/meta/whatsapp', payload: textPayload('hello'), headers: { 'content-type': 'application/json' } });
     assert.equal(response.statusCode, 401);

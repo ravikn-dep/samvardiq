@@ -231,3 +231,75 @@ describe('GET /v1/organizations/:organizationId/communication/handoffs', () => {
     }
   });
 });
+
+describe('CLINIC-W2D: POST .../handoffs/:conversationId/claim and /resolve', () => {
+  const claimUrl = (org: string, conv = 'conv-1') => `/v1/organizations/${org}/communication/handoffs/${conv}/claim`;
+  const resolveUrl = (org: string, conv = 'conv-1') => `/v1/organizations/${org}/communication/handoffs/${conv}/resolve`;
+  const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+
+  it('claim -> visible as HUMAN_ACTIVE with owner -> owner resolves RETURN_TO_AI -> leaves the inbox', async () => {
+    const member = await seedHuman('org-A', 'MEMBER');
+    const viewer = await seedHuman('org-A', 'VIEWER');
+    await world.conversations.create(conversation());
+
+    const claimed = await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(member) });
+    assert.equal(claimed.statusCode, 200);
+    const body = claimed.json();
+    assert.equal(body.state, 'HUMAN_ACTIVE');
+    assert.equal(body.handoffOwnerIdentityId, 'human-org-A-MEMBER');
+    assert.ok(body.handoffClaimedAt);
+    assert.ok(!('externalContactId' in body));
+
+    const inbox = await world.app.inject({ method: 'GET', url: url('org-A'), headers: auth(viewer) });
+    assert.deepEqual(inbox.json().items.map((i: { state: string; handoffOwnerIdentityId?: string }) => [i.state, i.handoffOwnerIdentityId]), [['HUMAN_ACTIVE', 'human-org-A-MEMBER']]);
+
+    const resolved = await world.app.inject({ method: 'POST', url: resolveUrl('org-A'), headers: auth(member), payload: { outcome: 'RETURN_TO_AI' } });
+    assert.equal(resolved.statusCode, 200);
+    assert.deepEqual(resolved.json(), { conversationId: 'conv-1', state: 'AI_ACTIVE', outcome: 'RETURN_TO_AI' });
+    const after = await world.app.inject({ method: 'GET', url: url('org-A'), headers: auth(viewer) });
+    assert.deepEqual(after.json().items, []);
+  });
+
+  it('a second human gets 409; a duplicate resolution gets 409; the owner re-claiming is 200', async () => {
+    const member = await seedHuman('org-A', 'MEMBER');
+    const owner = await seedHuman('org-A', 'OWNER');
+    await world.conversations.create(conversation());
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(member) })).statusCode, 200);
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(member) })).statusCode, 200);
+    const taken = await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(owner) });
+    assert.equal(taken.statusCode, 409);
+    assert.deepEqual(taken.json(), { error: 'Request conflicts with the current state of this resource.' });
+    assert.equal((await world.app.inject({ method: 'POST', url: resolveUrl('org-A'), headers: auth(owner), payload: { outcome: 'CLOSE' } })).statusCode, 409);
+    assert.equal((await world.app.inject({ method: 'POST', url: resolveUrl('org-A'), headers: auth(member), payload: { outcome: 'CLOSE' } })).statusCode, 200);
+    assert.equal((await world.app.inject({ method: 'POST', url: resolveUrl('org-A'), headers: auth(member), payload: { outcome: 'CLOSE' } })).statusCode, 409);
+  });
+
+  it('VIEWER and service principals get 403; no credential gets 401; nothing changes', async () => {
+    const viewer = await seedHuman('org-A', 'VIEWER');
+    const service = await seedServicePrincipal('org-A');
+    await world.conversations.create(conversation());
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(viewer) })).statusCode, 403);
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(service) })).statusCode, 403);
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A') })).statusCode, 401);
+    assert.equal((await world.app.inject({ method: 'POST', url: resolveUrl('org-A'), headers: auth(viewer), payload: { outcome: 'CLOSE' } })).statusCode, 403);
+    assert.equal((await world.conversations.getById('org-A', 'conv-1'))!.state, 'HUMAN_HANDOFF_REQUESTED');
+  });
+
+  it('cross-organization: an org-B member gets 403 on org A and 404 for org A conversation IDs under org B', async () => {
+    const memberB = await seedHuman('org-B', 'MEMBER');
+    await world.organizations.create({ organizationId: 'org-A', organizationType: 'clinic', name: 'org-A' }).catch(() => undefined);
+    await world.conversations.create(conversation());
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A'), headers: auth(memberB) })).statusCode, 403);
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-B'), headers: auth(memberB) })).statusCode, 404);
+    assert.equal((await world.conversations.getById('org-A', 'conv-1'))!.state, 'HUMAN_HANDOFF_REQUESTED');
+  });
+
+  it('input hygiene: unknown/missing outcome, extra body fields and malformed IDs are 400 before any service call', async () => {
+    const member = await seedHuman('org-A', 'MEMBER');
+    await world.conversations.create(conversation());
+    for (const payload of [{}, { outcome: 'ESCALATE' }, { outcome: 'CLOSE', ownerIdentityId: 'someone-else' }]) {
+      assert.equal((await world.app.inject({ method: 'POST', url: resolveUrl('org-A'), headers: auth(member), payload })).statusCode, 400, JSON.stringify(payload));
+    }
+    assert.equal((await world.app.inject({ method: 'POST', url: claimUrl('org-A', 'bad%20id'), headers: auth(member) })).statusCode, 400);
+  });
+});

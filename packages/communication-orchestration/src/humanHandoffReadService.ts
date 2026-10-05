@@ -25,7 +25,7 @@ export function canReadHumanHandoffInbox(actor: TrustedOrganizationContext): boo
   return actor.principalType === 'human';
 }
 
-function toHumanHandoffSummary(conversation: Conversation): HumanHandoffSummary {
+export function toHumanHandoffSummary(conversation: Conversation): HumanHandoffSummary {
   return {
     conversationId: conversation.conversationId,
     channelId: conversation.channelId,
@@ -37,6 +37,8 @@ function toHumanHandoffSummary(conversation: Conversation): HumanHandoffSummary 
     externalPatientId: conversation.externalPatientId,
     activeEnquiryId: conversation.activeEnquiryId,
     activeAppointmentId: conversation.activeAppointmentId,
+    handoffOwnerIdentityId: conversation.handoffOwnerIdentityId,
+    handoffClaimedAt: conversation.handoffClaimedAt,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };

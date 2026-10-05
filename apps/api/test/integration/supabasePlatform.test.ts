@@ -137,10 +137,10 @@ test('F3: hardening fixes the DEFAULT ACL too — a table/sequence/function crea
   }
 });
 
-test('F4: hardening pins search_path on all 3 Samvardiq functions, closing the mutable-search_path advisory with no behavior change', async () => {
+test('F4: hardening pins search_path on every Samvardiq function (OWN_FUNCTIONS), closing the mutable-search_path advisory with no behavior change', async () => {
   await applySupabaseHardening(owner.pool);
   const rows = await owner.pool.query(`select proname, proconfig from pg_proc where proname = any($1)`, [[...OWN_FUNCTIONS]]);
-  assert.equal(rows.rows.length, 3);
+  assert.equal(rows.rows.length, OWN_FUNCTIONS.length);
   for (const row of rows.rows as { proname: string; proconfig: string[] | null }[]) {
     assert.ok((row.proconfig ?? []).some((c) => c.startsWith('search_path=')), `${row.proname}: search_path pinned`);
   }
@@ -162,7 +162,7 @@ test('the platform-global list is exhaustive: every other public table keeps FOR
   );
   const listed = new Set<string>(PLATFORM_GLOBAL_TABLES);
   const unlisted = (rows as { relname: string; forced: boolean; policies: number }[]).filter((r) => !listed.has(r.relname));
-  assert.equal(unlisted.length, 12, '16 tables - 4 platform-global');
+  assert.equal(unlisted.length, 13, '17 tables - 4 platform-global');
   for (const row of unlisted) {
     assert.equal(row.forced, true, `${row.relname}: FORCE RLS`);
     assert.ok(row.policies >= 1, `${row.relname}: tenant policy present`);

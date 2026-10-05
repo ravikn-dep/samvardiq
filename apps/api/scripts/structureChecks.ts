@@ -15,7 +15,7 @@ import { Reporter, type AdminPostgres } from './stagingDb.js';
 
 export const EXPECTED_TABLES = [
   'approval_records', 'approval_requests', 'clinic_cms_connections', 'clinic_cms_connector_evidence', 'communication_channels',
-  'communication_message_content', 'communication_messages', 'conversations', 'goals', 'identities', 'identity_audit_events',
+  'communication_message_content', 'communication_messages', 'conversation_handoffs', 'conversations', 'goals', 'identities', 'identity_audit_events',
   'identity_provider_links', 'organization_memberships', 'organizations', 'recommendations', 'webhook_event_dedup',
 ] as const;
 
@@ -31,6 +31,7 @@ export const EXPECTED_APP_PRIVILEGES: Record<string, string> = {
   communication_channels: 'INSERT,SELECT',
   communication_message_content: 'DELETE,INSERT,SELECT',
   communication_messages: 'INSERT,SELECT',
+  conversation_handoffs: 'INSERT,SELECT',
   conversations: 'INSERT,SELECT,UPDATE',
   goals: 'DELETE,INSERT,SELECT,UPDATE',
   identities: 'INSERT,SELECT,UPDATE',
@@ -46,13 +47,14 @@ export const EXPECTED_JOURNALS: Record<string, { schema: string; migrations: num
   'data-foundation': { schema: 'drizzle_data_foundation', migrations: 2 },
   'identity-access': { schema: 'drizzle_identity_access', migrations: 5 },
   'clinic-cms-connector': { schema: 'drizzle_clinic_cms_connector', migrations: 3 },
-  'communication-orchestration': { schema: 'drizzle_communication_orchestration', migrations: 2 },
+  'communication-orchestration': { schema: 'drizzle_communication_orchestration', migrations: 3 },
 };
 
 export const EXPECTED_TRIGGERS = [
   { table: 'approval_requests', name: 'approval_requests_goal_consistency', fn: 'enforce_approval_request_goal_consistency' },
   { table: 'approval_records', name: 'approval_records_immutable', fn: 'prevent_approval_record_mutation' },
   { table: 'identity_audit_events', name: 'identity_audit_events_immutable', fn: 'prevent_identity_audit_event_mutation' },
+  { table: 'conversation_handoffs', name: 'conversation_handoffs_immutable', fn: 'prevent_conversation_handoff_mutation' },
 ] as const;
 
 const TABLE_PRIVS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] as const;
@@ -95,7 +97,7 @@ export async function appPrivilegeMatrix(admin: AdminPostgres): Promise<Record<s
 }
 
 export async function runStructureChecks(admin: AdminPostgres, reporter: Reporter): Promise<void> {
-  await reporter.check('S1 physical tables: exactly the 16 expected, no views/matviews/foreign tables', async () => {
+  await reporter.check(`S1 physical tables: exactly the ${EXPECTED_TABLES.length} expected, no views/matviews/foreign tables`, async () => {
     const tables = (await rowsOf(admin, `select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by 1`)).map((r) => r.table_name);
     assert.deepEqual(tables, [...EXPECTED_TABLES]);
     const other = await rowsOf(admin, `select c.relname from pg_class c join pg_namespace ns on ns.oid = c.relnamespace where ns.nspname = 'public' and c.relkind in ('v','m','f','p')`);
@@ -143,7 +145,7 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
 
   await reporter.check('S4 runtime grants: exactly the designed DML per table (no TRUNCATE/REFERENCES/TRIGGER anywhere)', async () => {
     assert.deepEqual(await appPrivilegeMatrix(admin), EXPECTED_APP_PRIVILEGES, 'samvardiq_app privileges per table');
-    return 'matrix matches for 16 tables';
+    return `matrix matches for ${EXPECTED_TABLES.length} tables`;
   });
 
   await reporter.check('S5 triggers: the 3 governed triggers exist, enabled, BEFORE ROW, on the right table, calling the right function; all functions SECURITY INVOKER', async () => {
@@ -162,14 +164,14 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
       assert.ok(def.includes(`EXECUTE FUNCTION ${trigger.fn}()`) || def.includes(`EXECUTE FUNCTION public.${trigger.fn}()`), `${trigger.name} calls ${trigger.fn}`);
     }
     const total = await rowsOf(admin, `select count(*)::int as n from pg_trigger tg join pg_class c on c.oid = tg.tgrelid join pg_namespace ns on ns.oid = c.relnamespace where ns.nspname = 'public' and not tg.tgisinternal`);
-    assert.equal(n(total[0]!.n), 3, 'no unexpected user triggers');
+    assert.equal(n(total[0]!.n), EXPECTED_TRIGGERS.length, 'no unexpected user triggers');
     const fns = await rowsOf(admin, `select proname, prosecdef from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = 'public' and proname = any($1) order by 1`, [[...OWN_FUNCTIONS]]);
-    assert.equal(fns.length, 3);
+    assert.equal(fns.length, EXPECTED_TRIGGERS.length);
     assert.ok(fns.every((f) => f.prosecdef === false), 'no Samvardiq function is SECURITY DEFINER');
-    return '3/3 triggers enabled; 3/3 functions SECURITY INVOKER';
+    return `${EXPECTED_TRIGGERS.length}/${EXPECTED_TRIGGERS.length} triggers enabled; ${fns.length}/${fns.length} functions SECURITY INVOKER`;
   });
 
-  await reporter.check('S6 RLS: 12 tenant tables ENABLE+FORCE with policies; 4 platform-global tables RLS-on with only the samvardiq_app-scoped policy; nothing unclassified', async () => {
+  await reporter.check(`S6 RLS: ${TENANT_TABLES.length} tenant tables ENABLE+FORCE with policies; ${PLATFORM_GLOBAL_TABLES.length} platform-global tables RLS-on with only the samvardiq_app-scoped policy; nothing unclassified`, async () => {
     const rows = await rowsOf(
       admin,
       `select c.relname, c.relrowsecurity as rls, c.relforcerowsecurity as forced,
@@ -261,11 +263,11 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
 
   await reporter.check('S10 own functions: search_path pinned (closes the Supabase advisor`s function_search_path_mutable finding)', async () => {
     const rows = await rowsOf(admin, `select proname, proconfig from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = 'public' and proname = any($1) order by 1`, [[...OWN_FUNCTIONS]]);
-    assert.equal(rows.length, 3);
+    assert.equal(rows.length, OWN_FUNCTIONS.length);
     for (const row of rows) {
       const config = (row.proconfig as string[] | null) ?? [];
       assert.ok(config.some((c) => c.startsWith('search_path=')), `${row.proname}: search_path must be pinned`);
     }
-    return '3/3 functions have a pinned search_path';
+    return `${rows.length}/${OWN_FUNCTIONS.length} functions have a pinned search_path`;
   });
 }

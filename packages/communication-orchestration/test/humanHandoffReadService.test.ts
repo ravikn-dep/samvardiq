@@ -152,7 +152,8 @@ test('AM: the DTO never carries externalContactId (raw WhatsApp phone) or any ra
   assert.ok(!keys.includes('externalContactId'));
   assert.deepEqual(
     keys.sort(),
-    ['activeAppointmentId', 'activeEnquiryId', 'bookingState', 'channelId', 'conversationId', 'createdAt', 'externalPatientId', 'handoffAt', 'handoffTrigger', 'preferredLanguage', 'state', 'updatedAt'].sort(),
+    // CLINIC-W2D (Founder decision W2D-03) adds exactly the owner identity ID and claim time — nothing else.
+    ['activeAppointmentId', 'activeEnquiryId', 'bookingState', 'channelId', 'conversationId', 'createdAt', 'externalPatientId', 'handoffAt', 'handoffClaimedAt', 'handoffOwnerIdentityId', 'handoffTrigger', 'preferredLanguage', 'state', 'updatedAt'].sort(),
   );
 });
 

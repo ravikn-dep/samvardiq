@@ -66,7 +66,7 @@
 export const PLATFORM_GLOBAL_TABLES = ['identities', 'identity_provider_links', 'communication_channels', 'webhook_event_dedup'] as const;
 
 /** Trigger functions created by the package migrations. */
-export const OWN_FUNCTIONS = ['enforce_approval_request_goal_consistency', 'prevent_approval_record_mutation', 'prevent_identity_audit_event_mutation'] as const;
+export const OWN_FUNCTIONS = ['enforce_approval_request_goal_consistency', 'prevent_approval_record_mutation', 'prevent_identity_audit_event_mutation', 'prevent_conversation_handoff_mutation'] as const;
 
 /** Roles reachable from a browser/Data API client — must hold no privilege on Samvardiq objects, now or on any future object. */
 export const CLIENT_FACING_ROLES = ['anon', 'authenticated'] as const;

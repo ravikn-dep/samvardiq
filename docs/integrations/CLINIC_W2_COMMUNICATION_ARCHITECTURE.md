@@ -214,7 +214,7 @@ Nothing new is added to `packages/clinic-cms-connector` or its Postgres schema. 
 
 ## 14. Human Handoff
 
-States exactly as specified: `AI_ACTIVE → HUMAN_HANDOFF_REQUESTED → HUMAN_ACTIVE → WAITING_FOR_PATIENT → RESOLVED → CLOSED` (stored as `Conversation.state`). Triggers: explicit patient request, `CLINICAL_QUERY`/`SAFETY_ESCALATION` intent, ambiguous patient match (§8), repeated low-confidence intent, connector failure blocking safe completion, any policy-boundary hit, staff-initiated takeover.
+States exactly as specified: `AI_ACTIVE → HUMAN_HANDOFF_REQUESTED → HUMAN_ACTIVE → WAITING_FOR_PATIENT → RESOLVED → CLOSED` (stored as `Conversation.state`). Claim, resolution (RETURN_TO_AI / CLOSE) and event-driven reopening of CLOSED conversations are implemented in §33 (CLINIC-W2D). Triggers: explicit patient request, `CLINICAL_QUERY`/`SAFETY_ESCALATION` intent, ambiguous patient match (§8), repeated low-confidence intent, connector failure blocking safe completion, any policy-boundary hit, staff-initiated takeover.
 
 **Binding invariant:** once `state` is anything other than `AI_ACTIVE`, `OutboundMessageService` refuses any AI-drafted send for that conversation — checked deterministically before every send, not left to the AI layer's own judgment to "know" it should stop.
 
@@ -423,3 +423,29 @@ Everything else in this document (reschedule/cancel via WhatsApp, reminders, mul
 - **Pagination:** bounded by Fastify's own JSON-schema validation (`limit`: integer, 1–100, default 20) — native platform validation, not hand-rolled clamping; a malformed cursor is rejected with 400 via a dedicated `InvalidHandoffCursorError`, never guessed at.
 - **Test-harness hardening (separate checkpoint, prerequisite to this slice):** a pre-existing, intermittent Windows-only `EBUSY` failure in this repo's PostgreSQL integration test teardown was traced to `embedded-postgres`'s own Windows `stop()` implementation (kills the process via `taskkill /f /t` without awaiting it, then immediately runs a non-retrying `fs.rm` on the data directory) — an upstream library race, not a defect in this repository's own code. Each affected harness now retries that specific removal with backoff on `EBUSY`/`EPERM`/`ENOTEMPTY`. Test-only; committed and validated separately before this slice's own implementation began.
 - **Deferred (explicitly, not silently):** claim/assign a conversation, reply as staff, resolve/close a handoff, resume AI control, real-time staff notification of a new handoff, a dedicated staff UI. Each requires a mutation/ownership model this read-only slice deliberately does not invent.
+
+## 33. Implementation Checkpoint (CLINIC-W2D) — Governed Human Handoff Ownership
+
+**STATUS: IMPLEMENTED_VALIDATED (source); staging activation of migration `0002` pending.** Turns §32's deferred claim/resolve/resume-AI/close items into canonical behaviour. No new ADR: states come from §14, the log from §23, the authority rule from ADR-IDENTITY-001's Role Model.
+
+**Founder decisions (2026-10-05):**
+
+- **W2D-01 — RETURN_TO_AI starts a fresh booking journey.** `HUMAN_ACTIVE → AI_ACTIVE` with the interrupted journey reset (`bookingState = NEW`; consultant, date, slot and **`bookingIdempotencyKey`** cleared; current handoff trigger/time and owner cleared). Preserved as provenance: `externalPatientId`, `activeEnquiryId`, `activeAppointmentId`, `preferredLanguage`. Clearing the key is the safety property: a later booking always uses a new key and can never replay the previous CMS operation.
+- **W2D-02 — CLOSED is not permanent suppression.** `CLOSE → CLOSED`. A new inbound patient event for that contact reopens the conversation as the same fresh journey and the message then runs through the normal pipeline (interpretation, policy, booking, handoff) — it is never silently stored. Reopening is **event-driven only**: it happens in `handleInboundTextEvent`, never on a read.
+- **W2D-03 — claimed handoffs stay visible.** The staff inbox lists `HUMAN_HANDOFF_REQUESTED` and `HUMAN_ACTIVE`; the summary gains only `handoffOwnerIdentityId` and `handoffClaimedAt`.
+- **Authority.** Human OWNER/MEMBER manage handoffs (`canManageHumanHandoff`); VIEWER stays read-only (the W2C read rule is unchanged); service principals never claim or resolve. Only the current owner resolves — no supervisor override, transfer or release in W2D.
+
+**Implementation:**
+
+| Lifecycle | Transition | Mechanism |
+|---|---|---|
+| Claim | `HUMAN_HANDOFF_REQUESTED → HUMAN_ACTIVE` | One state-guarded `UPDATE`; concurrent claimers re-check the guard after the winner commits → exactly one owner. Owner retry = 200, no second event; anyone else = 409 |
+| Resolve | `HUMAN_ACTIVE → AI_ACTIVE` (fresh journey) or `→ CLOSED` | `SELECT … FOR UPDATE`, owner check, update; duplicate resolution = 409, no event |
+| Reopen | `CLOSED → AI_ACTIVE` (fresh journey) | State-guarded `UPDATE` in inbound ingress; provider-event dedup prevents a redelivered event from reaching it again |
+
+- **Data (migration `0002_human_handoff_ownership`):** `conversations.handoff_owner_identity_id`, `handoff_claimed_at`, with a CHECK that an owner exists exactly while `HUMAN_ACTIVE`. New `conversation_handoffs` (§23): `(organization_id, handoff_id)`, event `CLAIMED | RESOLVED | REOPENED`, actor identity + principal type, `outcome` (`RETURN_TO_AI | CLOSE`, RESOLVED only), the trigger being claimed/resolved, `occurred_at`. CHECKs: RESOLVED ⇔ outcome; REOPENED ⇔ service actor (a reopen is caused by an inbound event, attributed to the channel's service principal, never to a human). Identifiers and metadata only — no message text, phone numbers or clinical content. RLS + FORCE on organization; runtime role gets INSERT/SELECT only; a BEFORE UPDATE/DELETE trigger blocks mutation for every role. Each state change and its event are written in the same transaction.
+- **API:** `POST /v1/organizations/:organizationId/communication/handoffs/:conversationId/claim` and `…/resolve` with `{ "outcome": "RETURN_TO_AI" | "CLOSE" }`. Errors follow existing conventions: 401 unauthenticated, 403 not a human OWNER/MEMBER (or not a member of that organization), 404 no such conversation in the caller's organization, 409 state/ownership conflict, 400 malformed input.
+- **Proof:** real-PostgreSQL concurrency (20 rounds × 10 concurrent claims → one winner each), claim-vs-resolve race, concurrent reopen (once), injected audit failure rolls back claim/resolve/reopen, RLS and append-only on the log, the ownership CHECK; plus service, orchestrator and HTTP suites (authorization, cross-organization, idempotency, reopen-on-inbound with normal processing, no reopen on reads, duplicate delivery → one REOPENED, booking after RETURN_TO_AI uses a new key).
+- **Deployment order:** `0002` is additive and safe for the pre-W2D code; the W2D code requires `0002`. Apply `0002` to staging first, then deploy the code.
+- **Known gap, not introduced here:** §16's deterministic safety-keyword net is not implemented in the canonical W2B pipeline; the ordinary escalation path after a reopen is the existing policy (repeated UNKNOWN or low confidence → handoff).
+- **Deferred:** transfer, release, supervisor override, assignment/routing, staff notification, staff replies, staff UI, SLA timers, multiple owners, recording AI-initiated handoff requests in `conversation_handoffs`.

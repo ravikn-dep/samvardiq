@@ -65,6 +65,20 @@ export class InvalidHandoffCursorError extends CommunicationError {
   }
 }
 
+/** CLINIC-W2D: no conversation with this ID exists in the caller's organization (another organization's conversations are indistinguishable from non-existent ones). */
+export class HumanHandoffNotFoundError extends CommunicationError {
+  constructor() {
+    super('The requested handoff was not found.');
+  }
+}
+
+/** CLINIC-W2D: the handoff is not in a state this actor may claim/resolve — already claimed by someone else, not claimed by this actor, or no longer active. */
+export class HumanHandoffConflictError extends CommunicationError {
+  constructor() {
+    super('The handoff is not in a state that allows this action.');
+  }
+}
+
 /**
  * A deliberately separate classification surface, mirroring
  * `application-services`'s own `classifyClinicOperationsError` pattern
@@ -78,7 +92,7 @@ export class InvalidHandoffCursorError extends CommunicationError {
  * additional fallback, same as it already does for
  * `classifyClinicOperationsError`.
  */
-export type CommunicationErrorClass = 'FORBIDDEN' | 'BAD_REQUEST' | 'INTERNAL';
+export type CommunicationErrorClass = 'FORBIDDEN' | 'BAD_REQUEST' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL';
 
 export interface ClassifiedCommunicationError {
   errorClass: CommunicationErrorClass;
@@ -96,6 +110,13 @@ export function classifyCommunicationError(error: unknown): ClassifiedCommunicat
   }
   if (error instanceof InvalidHandoffCursorError) {
     return { errorClass: 'BAD_REQUEST', httpStatus: 400, message: 'Invalid request.' };
+  }
+  if (error instanceof HumanHandoffNotFoundError) {
+    return { errorClass: 'NOT_FOUND', httpStatus: 404, message: 'Not found.' };
+  }
+  if (error instanceof HumanHandoffConflictError) {
+    // Same wording as application-services' own CONFLICT class.
+    return { errorClass: 'CONFLICT', httpStatus: 409, message: 'Request conflicts with the current state of this resource.' };
   }
   return { errorClass: 'INTERNAL', httpStatus: 500, message: 'Internal server error.' };
 }

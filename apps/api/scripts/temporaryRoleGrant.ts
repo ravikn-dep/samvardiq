@@ -123,7 +123,7 @@ async function cleanupAndProve(admin: AdminPostgres, reporter: Reporter, before:
     const matrix = await appPrivilegeMatrix(admin);
     assert.deepEqual(matrix, before.matrix);
     assert.deepEqual(matrix, EXPECTED_APP_PRIVILEGES);
-    return 'privilege matrix identical for 16 tables';
+    return `privilege matrix identical for ${Object.keys(matrix).length} tables`;
   });
   return { securityFailure };
 }

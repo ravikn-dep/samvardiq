@@ -83,8 +83,32 @@ export interface Conversation {
   readonly activeAppointmentId?: string;
   readonly handoffTrigger?: HandoffTrigger;
   readonly handoffAt?: string;
+  /** CLINIC-W2D: set only while `state === 'HUMAN_ACTIVE'` (a DB CHECK enforces the pairing). */
+  readonly handoffOwnerIdentityId?: string;
+  readonly handoffClaimedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/** CLINIC-W2D: how the owning human ends a handoff. RETURN_TO_AI -> AI_ACTIVE (fresh booking journey); CLOSE -> CLOSED. */
+export type HandoffResolutionOutcome = 'RETURN_TO_AI' | 'CLOSE';
+
+/** CLINIC-W2D: the append-only `conversation_handoffs` log. Identifiers and operational metadata only — never message content. */
+export type HandoffEventType = 'CLAIMED' | 'RESOLVED' | 'REOPENED';
+
+export interface HandoffEvent {
+  readonly handoffId: string;
+  readonly organizationId: string;
+  readonly conversationId: string;
+  readonly eventType: HandoffEventType;
+  readonly actorIdentityId: string;
+  /** CLAIMED/RESOLVED are human staff actions; REOPENED is caused by an inbound patient event, attributed to the channel's service principal. */
+  readonly actorPrincipalType: 'human' | 'service';
+  /** Present only on RESOLVED. */
+  readonly outcome?: HandoffResolutionOutcome;
+  /** The trigger of the handoff being claimed/resolved — kept here because the conversation's own copy is cleared on resolution. */
+  readonly handoffTrigger?: HandoffTrigger;
+  readonly occurredAt: string;
 }
 
 /** The only two intents this slice implements (section 17). */
@@ -145,6 +169,9 @@ export interface HumanHandoffSummary {
   readonly externalPatientId?: string;
   readonly activeEnquiryId?: string;
   readonly activeAppointmentId?: string;
+  /** CLINIC-W2D: owner identity ID and claim time, only for a claimed (HUMAN_ACTIVE) handoff. */
+  readonly handoffOwnerIdentityId?: string;
+  readonly handoffClaimedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

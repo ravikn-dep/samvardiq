@@ -57,6 +57,17 @@ export async function handleInboundTextEvent(
 ): Promise<void> {
   let conversation = await getOrCreateConversation(deps, channel, context, input.externalContactId);
 
+  // CLINIC-W2D (Founder decision W2D-02): CLOSED never silences a contact. A new inbound event — this path, and
+  // only this path, never a read — restarts a fresh AI journey (REOPENED, attributed to the channel's service
+  // principal) and the message continues through the normal pipeline below. Provider-event dedup upstream means a
+  // redelivered event never reaches here twice; if a concurrent inbound event reopened first, re-read its result.
+  if (conversation.state === 'CLOSED') {
+    conversation =
+      (await deps.conversations.reopenClosedConversation(context.organizationId, conversation.conversationId, context.identityId)) ??
+      (await deps.conversations.getById(context.organizationId, conversation.conversationId)) ??
+      conversation;
+  }
+
   // Section 25: once handed off, no further autonomous AI reply — the
   // message is still recorded (for continuity/audit), but nothing past
   // this point executes.

@@ -59,7 +59,7 @@ export async function startHarness(port: number): Promise<Harness> {
   const app = createPostgresClient({ connectionString: `postgres://samvardiq_app:${appPassword}@localhost:${port}/samvardiq_comms_test` });
 
   async function truncateAll(): Promise<void> {
-    await owner.pool.query('TRUNCATE communication_message_content, communication_messages, conversations, webhook_event_dedup, communication_channels RESTART IDENTITY CASCADE');
+    await owner.pool.query('TRUNCATE conversation_handoffs, communication_message_content, communication_messages, conversations, webhook_event_dedup, communication_channels RESTART IDENTITY CASCADE');
   }
 
   async function stop(): Promise<void> {
