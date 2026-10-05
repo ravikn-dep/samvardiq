@@ -1,0 +1,100 @@
+# ADR-PLATFORM-001 — External Provider Credential Protection
+
+**Status:** APPROVED — Founder decision A1 (PLATFORM-INTEGRATIONS-W1, 2026-10-05). Recorded as `ARCH-020` in `docs/11_Decisions.md` (verified next-available identifier — `ARCH-019` was the highest recorded).
+
+**Depends on:** `ADR-DATA-001` (`ARCH-015`, PostgreSQL as canonical persistence, provider-portable), `ADR-IDENTITY-001` (`ARCH-016`, `TrustedOrganizationContext`, OWNER/MEMBER/VIEWER), `ADR-IDENTITY-002` (`ARCH-019`, service principals). Implements the credential parts of `docs/04_Architecture.md`'s Connector Framework ("token refresh behavior", "revocation handling"), Integration Data ("token status") and Sensitive Data ("connector credentials … highest level of protection").
+
+**Implementation status:** not implemented. This ADR governs `PLATFORM-CREDENTIALS-W1`.
+
+---
+
+## Context
+
+Samvardiq's first external business-intelligence integration (Google Business Profile, `docs/integrations/GOOGLE_BUSINESS_PROFILE_ARCHITECTURE.md`) needs per-organization OAuth refresh tokens that are created at runtime when a clinic owner connects their Google account. Google Analytics, Gmail and Meta will need the same.
+
+What exists today (verified against source, 2026-10-05):
+
+- `packages/clinic-cms-connector/src/secretProvider.ts` — `ConnectorSecretProvider` / `EnvConnectorSecretProvider`: **read-only resolution of `env:NAME` references to deployment environment variables.** Suitable for a handful of operator-configured secrets; it cannot store a secret created at runtime by a user, and adding an environment variable per clinic per provider does not scale or rotate.
+- `docs/integrations/CLINIC_CMS_CONNECTOR_CONTRACT.md` already lists "production secret-store integration" as deferred.
+- No table, key-management code or encryption code for provider credentials exists anywhere in the repository.
+
+## Problem
+
+Store long-lived, per-organization provider credentials (OAuth refresh tokens, and the short-lived access tokens derived from them) so that:
+
+1. **a compromise of the database alone does not reveal any provider credential;**
+2. a credential can only ever be used for the organization and provider it was issued for;
+3. no credential reaches a browser, a log, an analytics event, an audit payload, a job payload or Git;
+4. keys can be rotated and credentials revoked or deleted without downtime;
+5. the design does not tie Samvardiq to one hosting or database vendor.
+
+## Decision
+
+**Application-level envelope encryption; authenticated ciphertext stored in PostgreSQL; the master key held outside the database.**
+
+```
+platform secret store ──► master key ring (key-encryption keys, versioned)
+                               │  wraps/unwraps
+                               ▼
+application credential boundary (in-process, server only)
+   per-credential data key (random) ── AES-256-GCM ──► credential ciphertext
+                               │
+                               ▼
+PostgreSQL: ciphertext + nonces + wrapped data key + key version + org/provider binding (RLS)
+```
+
+1. **Primitive:** AES-256-GCM (authenticated encryption) from Node's built-in `node:crypto` (`createCipheriv`/`createDecipheriv`, `setAAD`, `getAuthTag`). No custom cryptography, no third-party crypto library. A fresh random 96-bit nonce for every encryption; the 128-bit authentication tag is stored and always verified.
+2. **Envelope:** each credential is encrypted with its own random 256-bit data key; the data key is encrypted ("wrapped") with the current master key. Rotating the master key re-wraps data keys only.
+3. **Binding (associated data):** the authenticated associated data is `organization_id`, `provider`, `credential_id`, `credential_type` and the master-key version. A ciphertext copied to another organization's row, another provider or another credential fails authentication.
+4. **Master key ring:** versioned 256-bit keys supplied by the hosting platform's secret store (Railway today) as server-only configuration, never in PostgreSQL, Git or the browser. Exactly one version is *active* for new encryption; older versions remain available only for decryption until rotation completes. Hosting is an implementation detail: any secret store or managed KMS can supply the same key ring.
+5. **Separation of secrets from metadata:** two tables, following repository conventions (final names in implementation):
+   - a **connection** table (non-secret): organization, provider, provider account ID, granted scopes, status (`active`, `needs_reauth`, `revoked`, `disconnected`), access-token expiry, connected by/at, last validated at;
+   - a **credential** table (secret): credential ID, organization, provider, credential type (e.g. `oauth_refresh_token`), ciphertext, nonce, auth tag, wrapped data key (+ its nonce/tag), key version, created/rotated/revoked at.
+   Access tokens are short-lived and kept in memory; if cached, they are stored the same way.
+6. **Tenant isolation:** both tables are organization-scoped with RLS + FORCE RLS (`app.current_org_id`), like every other tenant table. The runtime role gets only the DML the credential lifecycle needs.
+7. **Authorization:**
+   - connecting, reconnecting and disconnecting a provider: human **OWNER** only (`TrustedOrganizationContext`, ADR-IDENTITY-001 — managing the organization's own external access is "managing the organization itself", the same reading as `canAdministerMembership`);
+   - background use (e.g. a sync job, ADR-PLATFORM-002): only through a **capability-specific** boundary — "obtain a usable access token for connection X of organization Y" — which re-checks that the connection is `active`, runs under that organization's context, and returns the token to the caller in memory only. There is no list-all, get-all or cross-organization credential read.
+8. **Plaintext handling:** decrypted values exist only in local variables for the duration of one provider call; they are never placed on objects that are logged, serialized, returned from routes, stored in job payloads or included in audit records. Errors from the credential boundary carry a fixed, sanitized class (`credential_unavailable`, `credential_invalid`, `key_unavailable`) — never key material, ciphertext or token fragments.
+9. **Revocation and deletion:** disconnecting marks the connection `disconnected`, attempts provider-side revocation where the provider supports it, and **deletes** the ciphertext row (no tombstoned secret). A failed provider revocation is recorded and does not keep the secret.
+10. **Audit:** connection created / re-authorized / disconnected / credential rotated / decryption failed are audited with IDs, actor and outcome only.
+
+## Security properties and failure behaviour
+
+| Situation | Behaviour |
+|---|---|
+| Database dump stolen, master key not | Credentials unreadable (data keys are wrapped by a key the database never holds) |
+| Master key stolen, database not | Nothing to decrypt; rotate the key ring |
+| Ciphertext moved to another organization, provider or credential row | GCM authentication fails (associated-data mismatch) → fail closed |
+| Ciphertext or tag tampered/corrupted | Authentication fails → fail closed, `credential_invalid`, connection set to `needs_reauth` |
+| Key version referenced but missing from the key ring | `key_unavailable` → fail closed; no fallback to another key |
+| Active key missing at startup | Credential features refuse to operate (fail closed); the rest of the API is unaffected |
+| Rotation interrupted | Each credential is re-wrapped in its own transaction (old version → new version, conditional on the old version); a partially rotated set is valid because every row names its version |
+| Disconnected or revoked connection | Token boundary refuses (status check) before any decryption |
+| Plaintext logged / in errors / returned from an API / in a job payload | Prevented by construction (no plaintext on serializable objects, sanitized errors, payloads carry IDs only) and covered by tests |
+| Secret in Git | Key ring only in the platform secret store; repository secret scan in validation |
+
+## Key management and rotation
+
+- Key ring format and environment variable names are implementation details of `PLATFORM-CREDENTIALS-W1`; the contract is: versioned keys, one active version, older versions decrypt-only.
+- **Rotation:** add new version → mark it active (new encryptions use it) → run an operator re-wrap of existing credentials (decrypt data key with old version, re-wrap with new, conditional update) → verify no row references the old version → remove the old version from the key ring.
+- **Compromise of a credential (not the key):** revoke at the provider, disconnect, reconnect.
+- **Compromise of the master key:** rotate the key ring and re-wrap; if database exposure is also suspected, revoke and reconnect every affected provider connection.
+
+## Portability
+
+The encrypted format is self-describing (key version, algorithm) and independent of Railway and Supabase. Moving the key ring to a managed KMS later means replacing "unwrap/wrap data key with master key" by a KMS call; ciphertext rows and the application boundary stay the same.
+
+## Alternatives considered
+
+1. **Encrypted credentials in PostgreSQL with an application/platform-held key — CHOSEN.** Meets the core property (database compromise alone reveals nothing), uses only Node's standard library, keeps PostgreSQL the single source of truth with existing RLS, and adds no new vendor.
+2. **Supabase Vault — rejected for now.** Key custody and decryption live inside the database platform, so a sufficiently privileged database compromise is closer to a credential compromise; it couples credential protection to Supabase, against `ADR-DATA-001`'s portability, and duplicates RLS concerns in a second mechanism.
+3. **External managed secret manager / KMS (e.g. a cloud KMS or secrets service) — deferred, not rejected.** Strongest key custody and audit, but adds a vendor, network dependency, IAM setup and cost before Samvardiq has a single live connection. The chosen format allows migrating the master-key role to a KMS later without re-architecting.
+4. **Environment variable per credential (extend `EnvConnectorSecretProvider`) — rejected.** Cannot store user-created secrets at runtime, does not scale per organization, no rotation.
+5. **Plaintext tokens protected only by RLS — rejected.** A database dump reveals every credential.
+
+## Consequences
+
+- New platform module and two tenant tables (`PLATFORM-CREDENTIALS-W1`), plus the staging verifier inventory and schema-first deployment order.
+- A new platform secret (the master key ring) must be provisioned in the hosting secret store before credential features can run; losing every copy makes stored credentials unrecoverable (owners reconnect), so the key ring needs an offline backup procedure in the runbook.
+- `EnvConnectorSecretProvider` remains for operator-configured secrets (e.g. CMS HMAC secrets); migrating those onto this store is a later, separate decision.

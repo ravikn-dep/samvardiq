@@ -1651,7 +1651,7 @@ CMO AI requests analysis from:
 
 ↓
 
-The Google Business Profile Expert identifies declining discovery searches.
+The Google Business Profile Expert identifies declining Google Search and Maps impressions.
 
 ↓
 
@@ -2664,7 +2664,7 @@ Goal:
 
 CMO AI and Domain Experts identify:
 
-- Declining discovery searches
+- Declining Google Search and Maps impressions
 - Increased website traffic
 - Poor appointment conversion
 - Slow review-response times

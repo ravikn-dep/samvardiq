@@ -72,38 +72,40 @@ export function healthcareLocalGrowthHandler(invocation: SkillInvocation): Skill
 
   let dataPoints = 0;
 
-  if (gbp.discoverySearches) {
+  // Visibility: Google's Search + Maps impression metrics (GBP-D8 — the withdrawn direct/discovery split is not used).
+  const impressionMetrics = Object.entries(gbp.impressions ?? {}).filter((entry): entry is [string, { current: number; previous: number }] => entry[1] !== undefined);
+  if (impressionMetrics.length > 0) {
     dataPoints++;
-    const { current, previous } = gbp.discoverySearches;
+    const current = impressionMetrics.reduce((sum, [, v]) => sum + v.current, 0);
+    const previous = impressionMetrics.reduce((sum, [, v]) => sum + v.previous, 0);
     const deltaPct = previous > 0 ? Math.round(((current - previous) / previous) * 100) : 0;
+    const metricCodes = impressionMetrics.map(([code]) => code).join(', ');
     if (deltaPct < 0) {
-      findings.push(`Discovery searches declined ${Math.abs(deltaPct)}% vs. the prior period.`);
+      findings.push(`GBP impressions (Search + Maps) declined ${Math.abs(deltaPct)}% vs. the prior period.`);
       recommendations.push(
         makeRecommendation({
           organizationId: invocation.organizationId,
           goalId: invocation.goalId,
           owningExecutive: 'CMO',
           originatingSkill: healthcareLocalGrowthDefinition.id,
-          title: 'Reverse declining GBP discovery searches',
+          title: 'Reverse declining GBP impressions on Google Search and Maps',
           recommendedAction:
-            'Publish weekly GBP posts and refresh service descriptions/photos to re-engage local discovery search ranking; review after 4 weeks.',
-          rationale: `Discovery searches fell ${Math.abs(deltaPct)}% (${previous} -> ${current}) for period ${gbp.period}, indicating reduced local visibility.`,
-          evidence: [
-            { source: 'google_business_profile', description: 'discoverySearches', period: gbp.period },
-          ],
+            'Publish weekly GBP posts and refresh service descriptions/photos to improve local visibility; review after 4 weeks.',
+          rationale: `GBP impressions fell ${Math.abs(deltaPct)}% (${previous} -> ${current}, sum of daily impressions across ${metricCodes}) for period ${gbp.period}, indicating reduced local visibility.`,
+          evidence: impressionMetrics.map(([code]) => ({ source: 'google_business_profile', description: code, period: gbp.period })),
           confidence: 65,
           assumptions: ['Decline is not explained by a known seasonal pattern in available evidence.'],
-          expectedImpact: 'Recover discovery search volume toward prior-period baseline.',
+          expectedImpact: 'Recover Search and Maps impressions toward the prior-period baseline.',
           effort: 'low',
           risk: 'low',
           dependencies: [],
-          successMetric: 'Discovery searches (GBP Insights) trending back toward previous-period baseline.',
+          successMetric: 'GBP Search and Maps impressions (Business Profile Performance API) trending back toward the previous-period baseline.',
           approvalRequirement: GBP_PUBLIC_FACING_APPROVAL,
           reviewDate: fourWeeksFrom(gbp.period),
         }),
       );
     } else {
-      findings.push(`Discovery searches are stable or improving (${deltaPct >= 0 ? '+' : ''}${deltaPct}%).`);
+      findings.push(`GBP impressions (Search + Maps) are stable or improving (${deltaPct >= 0 ? '+' : ''}${deltaPct}%).`);
     }
   }
 

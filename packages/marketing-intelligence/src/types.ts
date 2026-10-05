@@ -107,11 +107,31 @@ export interface SkillResult {
   generatedAt: string;
 }
 
+export interface PeriodComparison {
+  current: number;
+  previous: number;
+}
+
+/**
+ * The four impression metrics of Google's Business Profile Performance API
+ * (DailyMetric), named exactly as Google names them. Google counts multiple
+ * impressions by one user within a day as one, so a period value is a sum of
+ * daily values. Google withdrew the old "direct"/"discovery" search split
+ * (QUERIES_DIRECT/QUERIES_INDIRECT) on 2023-03-30 with no replacement, so it
+ * is not modelled here (Founder decision GBP-D8).
+ */
+export type GbpImpressionMetric =
+  | 'BUSINESS_IMPRESSIONS_DESKTOP_SEARCH'
+  | 'BUSINESS_IMPRESSIONS_MOBILE_SEARCH'
+  | 'BUSINESS_IMPRESSIONS_DESKTOP_MAPS'
+  | 'BUSINESS_IMPRESSIONS_MOBILE_MAPS';
+
 /** GBP evidence snapshot — supplied by the caller, never fabricated by a skill. */
 export interface GbpSnapshot {
   period: string;
-  discoverySearches?: { current: number; previous: number };
-  directSearches?: { current: number; previous: number };
+  /** Only the metrics Google actually returned for both periods; a missing metric is absent, never 0. */
+  impressions?: Partial<Record<GbpImpressionMetric, PeriodComparison>>;
+  /** Samvardiq-derived (not a Google metric). */
   profileCompleteness?: number;
   categories?: string[];
   servicesListed?: string[];

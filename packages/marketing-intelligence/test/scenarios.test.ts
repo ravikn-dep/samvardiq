@@ -47,7 +47,7 @@ test('Scenario A: increase appointments from GBP routes to healthcare-local-grow
         organizationProfile: { id: 'org-dr-deepthi', name: 'Dr. Deepthi Orthopaedic Clinic', city: 'Vizag' },
         gbp: {
           period: '2026-08',
-          discoverySearches: { current: 320, previous: 480 },
+          impressions: { BUSINESS_IMPRESSIONS_MOBILE_SEARCH: { current: 200, previous: 300 }, BUSINESS_IMPRESSIONS_MOBILE_MAPS: { current: 120, previous: 180 } },
           profileCompleteness: 72,
           reviewCount: 41,
           averageRating: 4.6,

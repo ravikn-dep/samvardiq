@@ -1685,3 +1685,172 @@ Founder Office
 
 ---
 
+
+## ARCH-020
+
+### Title
+
+External Provider Credential Protection
+
+### Date
+
+5 October 2026
+
+### Status
+
+Approved
+
+### Category
+
+Architecture
+
+### Decision
+
+Per-organization external-provider credentials (starting with Google
+Business Profile OAuth refresh tokens) are protected by application-level
+envelope encryption: each credential is encrypted with AES-256-GCM (Node's
+built-in `node:crypto`) under its own random data key, the data key is
+wrapped by a versioned master key held in the hosting platform's secret
+store (never in PostgreSQL, Git or the browser), and the authenticated
+ciphertext is stored in an organization-scoped, RLS-protected PostgreSQL
+table separate from non-secret connection metadata. Organization, provider,
+credential ID, type and key version are bound as authenticated associated
+data. Connection administration is human OWNER-only; background use goes
+through a capability-specific boundary only. Full record:
+`docs/decisions/ADR-PLATFORM-001.md`.
+
+### Reasoning
+
+GBP discovery (CLINIC-GBP-W1) found no way to store runtime-created
+per-organization secrets: the only primitive,
+`EnvConnectorSecretProvider`, resolves deployment environment variables
+read-only. `docs/04_Architecture.md` already requires connector token
+refresh and revocation and classifies connector credentials as Sensitive
+Data. Keeping the key outside the database means a database compromise
+alone reveals no credential, while PostgreSQL stays the single source of
+truth (`ARCH-015`) with existing RLS.
+
+### Alternatives Considered
+
+- Supabase Vault (rejected for now — key custody inside the database
+  platform, couples credential protection to Supabase)
+- External managed secret manager / KMS (deferred — stronger custody but a
+  new vendor and dependency before any live connection; the chosen format
+  allows migrating the master-key role later)
+- Environment variable per credential (rejected — cannot store
+  user-created secrets, no rotation)
+- Plaintext tokens behind RLS (rejected — a dump reveals everything)
+
+### Expected Benefits
+
+- Database compromise alone does not expose provider credentials
+- One reusable primitive for GBP, Google Analytics, Gmail and Meta
+- No new vendor; portable across hosting and database providers
+
+### Potential Risks
+
+- Loss of every copy of the master key ring makes stored credentials
+  unrecoverable (owners must reconnect) — mitigated by an offline key
+  backup procedure
+- Plaintext exists in process memory during use — mitigated by
+  minimal-lifetime handling and sanitized errors
+
+### Impact
+
+- New platform credential module and two tenant tables
+  (`PLATFORM-CREDENTIALS-W1`); new platform secret (master key ring)
+- No change to identity, RLS or approval architecture
+
+### Review Date
+
+When a managed KMS becomes justified (compliance requirement, multiple
+regions, or many live connections), or at production readiness review.
+
+### Owner
+
+Founder Office
+
+---
+
+## ARCH-021
+
+### Title
+
+Durable Background Jobs and Scheduling
+
+### Date
+
+5 October 2026
+
+### Status
+
+Approved
+
+### Category
+
+Architecture
+
+### Decision
+
+Background work runs on a PostgreSQL-backed durable job queue: jobs carry
+identifiers only (never credentials or personal/clinical content), are
+claimed with `FOR UPDATE SKIP LOCKED` under a lease with owner fencing, are
+retried with bounded exponential backoff according to consumer-classified
+failures, and end in `SUCCEEDED` or `DEAD`. Delivery is at-least-once;
+consumers must be idempotent, and enqueue is de-duplicated by a unique
+idempotency key. Schedule definitions are separate from execution: an
+idempotent tick enqueues due jobs, and whatever invokes it (initially the
+current host's scheduler) is a hosting detail. The queue table is
+platform-global identifiers-only data; each job executes under its own
+organization's context and service principal. Full record:
+`docs/decisions/ADR-PLATFORM-002.md`.
+
+### Reasoning
+
+`docs/04_Architecture.md` requires a job queue, scheduling engine,
+idempotency and retry logic, but none is implemented (verified 2026-10-05);
+the W2 message-content purge loop was already deferred for lack of one, and
+Google Business Profile synchronization needs daily, monthly and six-hourly
+runs. PostgreSQL is already the system of record, so a queue there is
+durable and transactional without new infrastructure.
+
+### Alternatives Considered
+
+- Hosting-platform scheduled jobs only (rejected as the queue — no durable
+  per-job state, retries or leases; kept only as a possible tick trigger)
+- External queue or workflow engine (rejected for now — new
+  infrastructure beyond current needs)
+- In-process timers (rejected — lost on restart, duplicated across
+  replicas)
+
+### Expected Benefits
+
+- Work survives restarts, deployments and crashes
+- One reusable primitive for integration sync, retention purges and future
+  approved automation
+- Tenant isolation preserved without new administrative authority
+
+### Potential Risks
+
+- Repeated execution after crashes — mitigated by mandatory idempotent
+  consumers and unique idempotency keys
+- Queue polling load on PostgreSQL — bounded by small batch claims and
+  modest polling intervals at current scale
+
+### Impact
+
+- New platform job module, one platform-global table, a worker process
+  and a tick trigger (`PLATFORM-JOBS-W1`)
+- First consumers: GBP synchronization and the message-content retention
+  purge
+
+### Review Date
+
+When job volume or latency requirements exceed what a PostgreSQL queue
+serves comfortably, or at production readiness review.
+
+### Owner
+
+Founder Office
+
+---

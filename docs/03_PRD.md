@@ -309,7 +309,7 @@ Increase:
 
 • Google Visibility
 
-• Discovery Searches
+• Google Search and Maps impressions
 
 • Website Traffic
 
@@ -383,15 +383,17 @@ CMO AI should function like an experienced healthcare marketing strategist rathe
 
 Increase:
 
-- Discovery Searches
-- Direct Searches
-- Calls
+- Google Search impressions
+- Google Maps impressions
+- Call-button clicks (not completed calls)
 - Website Clicks
 - Direction Requests
 - Appointment Requests
 - Patient Reviews
 - Review Quality
 - Local Visibility
+
+_Updated 2026-10-05 (GBP decision D8): Google withdrew the "direct" and "discovery" search metrics in 2023 with no replacement, so they were replaced here by the current Search and Maps impression metrics. Google's call metric counts call-button clicks, not completed calls. See `docs/integrations/GOOGLE_BUSINESS_PROFILE_ARCHITECTURE.md`._
 
 Reduce:
 
@@ -564,7 +566,7 @@ CMO AI continuously monitors the outcome.
 Questions include:
 
 - Did visibility improve?
-- Did discovery searches increase?
+- Did Search and Maps impressions increase?
 - Were more calls received?
 - Did website traffic improve?
 - Did appointment requests increase?
