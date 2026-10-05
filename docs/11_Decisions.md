@@ -1698,7 +1698,7 @@ External Provider Credential Protection
 
 ### Status
 
-Approved
+Approved. Implemented and validated locally by PLATFORM-CREDENTIALS-W1 (`packages/platform-credentials`, 5 October 2026); staging activation pending. See `ADR-PLATFORM-001.md` → Implementation.
 
 ### Category
 

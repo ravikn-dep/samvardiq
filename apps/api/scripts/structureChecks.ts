@@ -15,7 +15,8 @@ import { Reporter, type AdminPostgres } from './stagingDb.js';
 
 export const EXPECTED_TABLES = [
   'approval_records', 'approval_requests', 'clinic_cms_connections', 'clinic_cms_connector_evidence', 'communication_channels',
-  'communication_message_content', 'communication_messages', 'conversation_handoffs', 'conversations', 'goals', 'identities', 'identity_audit_events',
+  'communication_message_content', 'communication_messages', 'conversation_handoffs', 'conversations', 'external_provider_connections',
+  'external_provider_credential_events', 'external_provider_credentials', 'goals', 'identities', 'identity_audit_events',
   'identity_provider_links', 'organization_memberships', 'organizations', 'recommendations', 'webhook_event_dedup',
 ] as const;
 
@@ -33,6 +34,10 @@ export const EXPECTED_APP_PRIVILEGES: Record<string, string> = {
   communication_messages: 'INSERT,SELECT',
   conversation_handoffs: 'INSERT,SELECT',
   conversations: 'INSERT,SELECT,UPDATE',
+  // PLATFORM-CREDENTIALS-W1: UPDATE is column-level only on two of these (EXPECTED_APP_COLUMN_UPDATES), so no table-level UPDATE.
+  external_provider_connections: 'INSERT,SELECT',
+  external_provider_credential_events: 'INSERT,SELECT',
+  external_provider_credentials: 'DELETE,INSERT,SELECT',
   goals: 'DELETE,INSERT,SELECT,UPDATE',
   identities: 'INSERT,SELECT,UPDATE',
   identity_audit_events: 'INSERT,SELECT',
@@ -48,6 +53,13 @@ export const EXPECTED_JOURNALS: Record<string, { schema: string; migrations: num
   'identity-access': { schema: 'drizzle_identity_access', migrations: 5 },
   'clinic-cms-connector': { schema: 'drizzle_clinic_cms_connector', migrations: 3 },
   'communication-orchestration': { schema: 'drizzle_communication_orchestration', migrations: 3 },
+  'platform-credentials': { schema: 'drizzle_platform_credentials', migrations: 1 },
+};
+
+/** Column-level UPDATE grants (PLATFORM-CREDENTIALS-W1): lifecycle/wrap columns only — never a ciphertext or an identity column. */
+export const EXPECTED_APP_COLUMN_UPDATES: Record<string, string> = {
+  external_provider_connections: 'disconnected_at,external_account_id,granted_scopes,status,updated_at',
+  external_provider_credentials: 'key_check,key_version,rotated_at,wrap_nonce,wrap_tag,wrapped_key',
 };
 
 export const EXPECTED_TRIGGERS = [
@@ -55,6 +67,7 @@ export const EXPECTED_TRIGGERS = [
   { table: 'approval_records', name: 'approval_records_immutable', fn: 'prevent_approval_record_mutation' },
   { table: 'identity_audit_events', name: 'identity_audit_events_immutable', fn: 'prevent_identity_audit_event_mutation' },
   { table: 'conversation_handoffs', name: 'conversation_handoffs_immutable', fn: 'prevent_conversation_handoff_mutation' },
+  { table: 'external_provider_credential_events', name: 'external_provider_credential_events_immutable', fn: 'prevent_credential_event_mutation' },
 ] as const;
 
 const TABLE_PRIVS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] as const;
@@ -143,9 +156,17 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
     return 'postgres cannot assume the runtime role';
   });
 
-  await reporter.check('S4 runtime grants: exactly the designed DML per table (no TRUNCATE/REFERENCES/TRIGGER anywhere)', async () => {
+  await reporter.check('S4 runtime grants: exactly the designed DML per table (no TRUNCATE/REFERENCES/TRIGGER anywhere) and exactly the designed column-level UPDATEs', async () => {
     assert.deepEqual(await appPrivilegeMatrix(admin), EXPECTED_APP_PRIVILEGES, 'samvardiq_app privileges per table');
-    return `matrix matches for ${EXPECTED_TABLES.length} tables`;
+    const columns = await rowsOf(
+      admin,
+      `select table_name, string_agg(column_name, ',' order by column_name) as cols from information_schema.column_privileges
+        where table_schema = 'public' and grantee = 'samvardiq_app' and privilege_type = 'UPDATE' group by 1`,
+    );
+    // A table-level UPDATE also lists every column here, so only tables without one are compared.
+    const columnOnly = Object.fromEntries(columns.filter((r) => !EXPECTED_APP_PRIVILEGES[String(r.table_name)]!.includes('UPDATE')).map((r) => [r.table_name, r.cols]));
+    assert.deepEqual(columnOnly, EXPECTED_APP_COLUMN_UPDATES, 'samvardiq_app column-level UPDATE grants');
+    return `matrix matches for ${EXPECTED_TABLES.length} tables; column-level UPDATE on ${Object.keys(columnOnly).length} tables`;
   });
 
   await reporter.check(`S5 triggers: the ${EXPECTED_TRIGGERS.length} governed triggers exist, enabled, BEFORE ROW, on the right table, calling the right function; all functions SECURITY INVOKER`, async () => {
@@ -201,10 +222,21 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
     return `${TENANT_TABLES.length} tenant + ${PLATFORM_GLOBAL_TABLES.length} platform-global classified; ${tenantPolicies.length} tenant policies`;
   });
 
-  await reporter.check('S7 no credential-bearing column anywhere: only *_reference columns may name a secret/token', async () => {
+  await reporter.check('S7 no plaintext credential column anywhere: only *_reference columns or ARCH-020 identifiers name a secret, and binary (envelope) columns exist only in external_provider_credentials', async () => {
     const cols = await rowsOf(admin, `select table_name, column_name from information_schema.columns where table_schema = 'public' and column_name ~* '(secret|password|passwd|token|signature|api_?key|credential|private)' order by 1, 2`);
-    for (const col of cols) assert.match(String(col.column_name), /_reference$/, `${col.table_name}.${col.column_name} must be a reference, not a value`);
-    return `${cols.length} secret-adjacent column(s), all *_reference: ${cols.map((c) => `${c.table_name}.${c.column_name}`).join(', ')}`;
+    // PLATFORM-CREDENTIALS-W1: identifiers of an encrypted credential, never its value — the value exists only as an AES-256-GCM envelope.
+    const identifiers = ['external_provider_credential_events.credential_id', 'external_provider_credentials.credential_id', 'external_provider_credentials.credential_type'];
+    for (const col of cols) {
+      const name = `${col.table_name}.${col.column_name}`;
+      assert.ok(/_reference$/.test(String(col.column_name)) || identifiers.includes(name), `${name} must be a reference or an ARCH-020 identifier, not a value`);
+    }
+    const binary = await rowsOf(admin, `select table_name, column_name from information_schema.columns where table_schema = 'public' and data_type = 'bytea' order by 1, 2`);
+    assert.deepEqual(
+      binary.map((c) => `${c.table_name}.${c.column_name}`),
+      ['ciphertext', 'key_check', 'payload_nonce', 'payload_tag', 'wrap_nonce', 'wrap_tag', 'wrapped_key'].map((c) => `external_provider_credentials.${c}`),
+      'envelope columns exist only in the ARCH-020 credential table',
+    );
+    return `${cols.length} secret-adjacent column(s), all *_reference or ARCH-020 identifiers; ${binary.length} envelope columns, all in external_provider_credentials`;
   });
 
   await reporter.check('E1 exposure: anon/authenticated hold NO privilege (table, column, sequence, function) on any Samvardiq object', async () => {

@@ -21,6 +21,7 @@ const projects = [
   'packages/clinic-cms-connector',
   'packages/application-services',
   'packages/communication-orchestration',
+  'packages/platform-credentials',
   'apps/api',
 ];
 

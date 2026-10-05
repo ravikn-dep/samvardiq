@@ -587,3 +587,22 @@ The only persistent database change is migration `0002`; every synthetic verific
 **Verifier inventory now:** 17 tables, 4 governed triggers (`conversation_handoffs_immutable` added), 4 own functions (`prevent_conversation_handoff_mutation` added), communication journal 3; counts in the verifier are derived from these lists. A future migration adding a table, trigger or function must update the same lists.
 
 **Rollback posture:** if a later W2D code deployment misbehaves, roll back the Railway deployment to `10b8023` — it runs correctly on the migrated schema. Do not drop `0002` while `conversation_handoffs` holds audit rows.
+
+## 28. PLATFORM-CREDENTIALS-W1 — credential store migration (pending activation)
+
+**Status: implemented and validated locally on branch `platform-credentials-w1`; staging NOT migrated.** Governs `ARCH-020` (`docs/decisions/ADR-PLATFORM-001.md`); key operations in `PROVIDER_CREDENTIAL_KEYS_RUNBOOK.md`.
+
+**What it adds:** a fifth migration step, `platform-credentials` (journal `drizzle_platform_credentials`, migration `0000_external_provider_credentials`). It is additive: three tables (`external_provider_connections`, `external_provider_credentials`, `external_provider_credential_events`), RLS + FORCE, column-level UPDATE grants, and one trigger with its function (`prevent_credential_event_mutation`).
+
+**Compatibility:**
+- **Old code + new schema:** safe. `main` never references the tables. `main`'s verifier will report the three new tables as unexpected (S1 and related checks), which is expected after migrating.
+- **New code + old schema:** the API runtime is unaffected, because no route or startup path uses the module and it needs no new Railway variable. The branch's verifier and migration runner expect the new schema.
+- **Order:** schema first.
+
+**Activation sequence (requires explicit authorization):**
+1. Pre-audit from `main`: structure all pass, 17 tables.
+2. From the branch, run `npm run migrate:staging` logic: only `platform-credentials/0000` should be pending; re-apply hardening, which revokes PUBLIC on the new function and pins its `search_path`.
+3. Old code + new schema: run the branch's structure check (20 tables, 5 triggers, 5 own functions, column UPDATE grants, envelope columns only in `external_provider_credentials`) and its behaviour suite `--grant-set-role`, 17 checks including B16. B16 uses an ephemeral in-process key, and all its rows are truncated. Railway `/health` must be 200.
+4. Fast-forward `main`, let Railway deploy, then run the runtime smoke and a final audit.
+
+No master key is provisioned in Railway at this step.

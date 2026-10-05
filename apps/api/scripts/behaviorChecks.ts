@@ -22,6 +22,7 @@
  *  - local rehearsal: a direct login as samvardiq_app, or SET ROLE as superuser.
  */
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 
 import { PostgresApprovalRepository, PostgresGoalRepository, PostgresOrganizationRepository, PostgresRecommendationRepository, createPostgresClient as createDataFoundation } from '@samvardiq/data-foundation/dist/postgres/index.js';
 import { PostgresIdentityAuditRepository, PostgresIdentityProviderLinkRepository, PostgresIdentityRepository, PostgresMembershipRepository, createPostgresClient as createIdentity } from '@samvardiq/identity-access/dist/postgres/index.js';
@@ -29,6 +30,7 @@ import { AuthorizationService } from '@samvardiq/identity-access';
 import { PostgresClinicCmsConnectionRepository, PostgresConnectorAuditRepository, createPostgresClient as createCms } from '@samvardiq/clinic-cms-connector/dist/postgres/index.js';
 import { PostgresCommunicationChannelRepository, PostgresConversationRepository, PostgresMessageContentRepository, PostgresMessageRepository, PostgresWebhookEventDedupRepository, createPostgresClient as createComms } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
 import { computePurgeAfter } from '@samvardiq/communication-orchestration';
+import { ACTIVE_KEY_VERSION_ENV, MASTER_KEYS_ENV, MasterKeyRing, ProviderCredentialService, createPostgresClient as createCredentials } from '@samvardiq/platform-credentials';
 
 import { EXPECTED_TABLES, EXPECTED_TRIGGERS, TENANT_TABLES } from './structureChecks.js';
 import { Reporter, sanitizeError, type AdminPostgres } from './stagingDb.js';
@@ -108,6 +110,7 @@ async function assertOnlySynthetic(admin: AdminPostgres): Promise<void> {
     ['organization_memberships', 'organization_id'], ['identity_audit_events', 'coalesce(organization_id, target_id)'], ['clinic_cms_connections', 'organization_id'], ['clinic_cms_connector_evidence', 'organization_id'],
     ['conversations', 'organization_id'], ['conversation_handoffs', 'organization_id'], ['communication_messages', 'organization_id'], ['communication_message_content', 'organization_id'], ['communication_channels', 'organization_id'],
     ['identities', 'identity_id'], ['identity_provider_links', 'identity_id'], ['webhook_event_dedup', 'external_event_id'],
+    ['external_provider_connections', 'organization_id'], ['external_provider_credentials', 'organization_id'], ['external_provider_credential_events', 'organization_id'],
   ];
   assert.equal(probes.length, EXPECTED_TABLES.length);
   for (const [table, expression] of probes) {
@@ -133,6 +136,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
   const idn = connect((config) => createIdentity(config));
   const cms = connect((config) => createCms(config));
   const comms = connect((config) => createComms(config));
+  const cred = connect((config) => createCredentials(config));
 
   try {
     const organizations = new PostgresOrganizationRepository(df.db);
@@ -151,17 +155,19 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     const messages = new PostgresMessageRepository(comms.db);
     const content = new PostgresMessageContentRepository(comms.db);
     const dedup = new PostgresWebhookEventDedupRepository(comms.db);
-    const pools: Record<string, Pool> = { 'data-foundation': df.pool, 'identity-access': idn.pool, 'clinic-cms-connector': cms.pool, 'communication-orchestration': comms.pool };
+    const pools: Record<string, Pool> = {
+      'data-foundation': df.pool, 'identity-access': idn.pool, 'clinic-cms-connector': cms.pool, 'communication-orchestration': comms.pool, 'platform-credentials': cred.pool,
+    };
 
     let roleOk = false;
-    await reporter.check('B1 every runtime session really is samvardiq_app (not the owner), on all four package pools', async () => {
+    await reporter.check(`B1 every runtime session really is samvardiq_app (not the owner), on all ${Object.keys(pools).length} package pools`, async () => {
       for (const [name, pool] of Object.entries(pools)) {
         // Several sessions per pool, concurrently, so a pooled session that missed the role switch cannot hide.
         const who = await Promise.all([1, 2, 3].map(() => pool.query('select current_user as u, (select rolbypassrls from pg_roles where rolname = current_user) as bypass')));
         for (const result of who) assert.deepEqual({ ...result.rows[0] }, { u: 'samvardiq_app', bypass: false }, `${name}: pooled session role`);
       }
       roleOk = true;
-      return '4 pools x 3 concurrent sessions = samvardiq_app, NOBYPASSRLS';
+      return `${Object.keys(pools).length} pools x 3 concurrent sessions = samvardiq_app, NOBYPASSRLS`;
     });
     if (!roleOk) return; // never continue as a role that bypasses RLS
 
@@ -431,6 +437,39 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       return 'A: 2 handoffs in 2 pages (AI_ACTIVE conversation excluded); B: 1; no-context: 0; W2D claim: one owner, audited, cross-org NOT_FOUND';
     });
 
+    // ---- PLATFORM-CREDENTIALS-W1 (ARCH-020) -----------------------------------------------------------------------------
+    await reporter.check('B16 ARCH-020 credential store as the runtime role: OWNER connects, the org service principal resolves, only ciphertext at rest, humans/other orgs refused, disconnect deletes the ciphertext', async () => {
+      // Ephemeral in-process key ring: generated for this run only, never printed or persisted; B15 truncates every row it wrapped.
+      const keyRing = MasterKeyRing.fromEnv({ [MASTER_KEYS_ENV]: `1:${randomBytes(32).toString('base64')}`, [ACTIVE_KEY_VERSION_ENV]: '1' });
+      const credentials = new ProviderCredentialService(cred.db, keyRing);
+      const ownerA = await authz.resolveTrustedContext({ principal: principal('sub-w1b-id-owner-a'), requestedOrganizationId: ORG_A });
+      const ownerB = await authz.resolveTrustedContext({ principal: principal('sub-w1b-id-owner-b'), requestedOrganizationId: ORG_B });
+      const serviceA = await authz.resolveTrustedContext({ principal: principal('sub-w1b-id-svc-a', 'w1b-whatsapp-channel'), requestedOrganizationId: ORG_A });
+      const secretA = Buffer.from(`w1b-synthetic-secret-${randomBytes(8).toString('hex')}`);
+      const secretB = Buffer.from(`w1b-synthetic-secret-${randomBytes(8).toString('hex')}`);
+      const input = (secret: Buffer) => ({ provider: 'w1b_synthetic', externalAccountId: 'w1b-account', grantedScopes: ['w1b.read'], credentialType: 'w1b_token', secret });
+      const kept = await credentials.connect(ownerA, input(secretA));
+      const dropped = await credentials.connect(ownerB, input(secretB));
+
+      assert.equal(await credentials.useCredential(serviceA, kept.connectionId, 'w1b_token', async (s) => s.equals(secretA)), true, 'service principal resolves its own organization`s credential');
+      const refused = async (attempt: Promise<unknown>, name: string) => assert.rejects(attempt, (e: Error) => e.constructor.name === name);
+      await refused(credentials.useCredential(ownerA, kept.connectionId, 'w1b_token', async () => true), 'CredentialAccessDeniedError');
+      await refused(credentials.useCredential(serviceA, dropped.connectionId, 'w1b_token', async () => true), 'CredentialUnavailableError');
+      await refused(credentials.connect(serviceA, input(secretA)), 'CredentialAccessDeniedError');
+
+      const atRest = (await admin.pool.query('select ciphertext from public.external_provider_credentials')).rows as { ciphertext: Buffer }[];
+      assert.ok(atRest.length === 2 && atRest.every((r) => !r.ciphertext.includes(secretA) && !r.ciphertext.includes(secretB)), 'only ciphertext at rest');
+      const crossOrg = await inTx(cred.pool, { org: ORG_A }, async (c) => (await c.query(`select 1 from external_provider_credentials where organization_id = $1`, [ORG_B])).rows.length);
+      assert.equal(crossOrg, 0, 'A cannot see B`s credential rows');
+      await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`update external_provider_credentials set ciphertext = '\\x00'`)), '42501', 'runtime ciphertext rewrite');
+      await expectSqlState(admin.pool.query('delete from public.external_provider_credential_events'), 'P0001', 'owner audit DELETE');
+
+      const disconnected = await credentials.disconnect(ownerB, dropped.connectionId);
+      assert.equal(disconnected.remoteRevocation, 'NOT_ATTEMPTED');
+      assert.equal(Number((await admin.pool.query('select count(*)::int as n from public.external_provider_credentials where organization_id = $1', [ORG_B])).rows[0].n), 0, 'disconnect deleted the ciphertext');
+      return 'connect/use/refuse/disconnect as samvardiq_app; ciphertext-only at rest; cross-org 0 rows; ciphertext rewrite = 42501; audit owner DELETE = P0001';
+    });
+
     // ---- missing organization context ------------------------------------------------------------------------------
     await reporter.check(`B12 missing-context fail-closed: all ${TENANT_TABLES.length} populated tenant tables return zero rows with no context, and writes are rejected`, async () => {
       const allPools = Object.values(pools);
@@ -440,7 +479,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
         // never an organization-scoped one. Every other tenant table exposes nothing.
         const expectedVisible = table === 'identity_audit_events' ? Number(((await admin.pool.query(`select count(*)::int as n from public.${table} where organization_id is null`)).rows[0] as { n: number }).n) : 0;
         const visible = await Promise.all(allPools.map(async (pool) => Number(((await pool.query(`select count(*)::int as n from public.${table}`)).rows[0] as { n: number }).n)));
-        assert.deepEqual(visible, [expectedVisible, expectedVisible, expectedVisible, expectedVisible], `${table}: no session context must expose nothing tenant-scoped`);
+        assert.deepEqual(visible, allPools.map(() => expectedVisible), `${table}: no session context must expose nothing tenant-scoped`);
       }
       const orgScopedAudit = await idn.pool.query(`select count(*)::int as n from identity_audit_events where organization_id is not null`);
       assert.equal(Number((orgScopedAudit.rows[0] as { n: number }).n), 0, 'no organization-scoped audit event is visible without context');
@@ -452,9 +491,10 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
         [idn.pool, `insert into identity_audit_events (event_id, organization_id, actor_principal_type, event_type, target_type, target_id, outcome) values ('w1b-evt-noctx', '${ORG_A}', 'system', 'MEMBERSHIP_STATUS_CHANGED', 'MEMBERSHIP', 'x', 'SUCCESS')`],
         [cms.pool, `insert into clinic_cms_connections (organization_id, connection_id, base_url, key_id, secret_reference, approved_scopes, timezone, enabled) values ('${ORG_A}', 'w1b-noctx', 'https://cms.invalid', 'k', 'env:X', '[]'::jsonb, 'Asia/Kolkata', true)`],
         [comms.pool, `insert into conversations (organization_id, conversation_id, channel_id, external_contact_id, state, preferred_language, booking_state) values ('${ORG_A}', 'w1b-noctx', 'w1b-chan-A', 'w1b-c', 'AI_ACTIVE', 'en-IN', 'NEW')`],
+        [cred.pool, `insert into external_provider_connections (organization_id, connection_id, provider, status, granted_scopes, connected_by_identity_id) values ('${ORG_A}', 'w1b-noctx', 'w1b_synthetic', 'ACTIVE', '[]'::jsonb, 'w1b-id-owner-a')`],
       ];
       for (const [pool, text] of writes) await expectSqlState(pool.query(text), '42501', 'no-context write');
-      return `${TENANT_TABLES.length} tables x ${allPools.length} pools = 0 tenant rows visible (identity_audit_events: global events only, by design); 5 representative no-context writes = 42501`;
+      return `${TENANT_TABLES.length} tables x ${allPools.length} pools = 0 tenant rows visible (identity_audit_events: global events only, by design); ${writes.length} representative no-context writes = 42501`;
     });
 
     await reporter.check('B13 synthetic-data-only: every persisted row belongs to a w1b- synthetic identifier', async () => {
@@ -468,7 +508,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     });
   } finally {
     // ---- cleanup (always) ------------------------------------------------------------------------------------------
-    await Promise.allSettled([df, idn, cms, comms].map((client) => (client.pool as Pool).end()));
+    await Promise.allSettled([df, idn, cms, comms, cred].map((client) => (client.pool as Pool).end()));
     await reporter.check('B15 cleanup: only synthetic rows exist (else refuse), then all removed; tables empty; governed triggers still enabled', async () => {
       // Re-proven here, not trusted from B0/B13: if the suite aborted early or anything else wrote meanwhile, never truncate non-synthetic data.
       await assertOnlySynthetic(admin);

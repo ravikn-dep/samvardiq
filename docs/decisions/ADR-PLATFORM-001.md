@@ -4,7 +4,7 @@
 
 **Depends on:** `ADR-DATA-001` (`ARCH-015`, PostgreSQL as canonical persistence, provider-portable), `ADR-IDENTITY-001` (`ARCH-016`, `TrustedOrganizationContext`, OWNER/MEMBER/VIEWER), `ADR-IDENTITY-002` (`ARCH-019`, service principals). Implements the credential parts of `docs/04_Architecture.md`'s Connector Framework ("token refresh behavior", "revocation handling"), Integration Data ("token status") and Sensitive Data ("connector credentials … highest level of protection").
 
-**Implementation status:** not implemented. This ADR governs `PLATFORM-CREDENTIALS-W1`.
+**Implementation status:** IMPLEMENTED AND VALIDATED LOCALLY by `PLATFORM-CREDENTIALS-W1` (`packages/platform-credentials`, migration `platform-credentials/0000_external_provider_credentials`, branch `platform-credentials-w1`). **Not yet activated on staging** — next: `PLATFORM-CREDENTIALS-W1-STAGING-ACTIVATION`. See "Implementation" at the end.
 
 ---
 
@@ -98,3 +98,48 @@ The encrypted format is self-describing (key version, algorithm) and independent
 - New platform module and two tenant tables (`PLATFORM-CREDENTIALS-W1`), plus the staging verifier inventory and schema-first deployment order.
 - A new platform secret (the master key ring) must be provisioned in the hosting secret store before credential features can run; losing every copy makes stored credentials unrecoverable (owners reconnect), so the key ring needs an offline backup procedure in the runbook.
 - `EnvConnectorSecretProvider` remains for operator-configured secrets (e.g. CMS HMAC secrets); migrating those onto this store is a later, separate decision.
+
+---
+
+## Implementation (PLATFORM-CREDENTIALS-W1, 2026-10-05)
+
+Provider-neutral; no provider API, OAuth flow, route or worker is included. Operations: [`docs/infrastructure/PROVIDER_CREDENTIAL_KEYS_RUNBOOK.md`](../infrastructure/PROVIDER_CREDENTIAL_KEYS_RUNBOOK.md).
+
+**Module:** `packages/platform-credentials`, its own migration journal (`drizzle_platform_credentials`). It exports only the service boundary, rotation, key ring and errors; the envelope primitives and tables are internal.
+
+**Tables (RLS + FORCE RLS, keyed on `app.current_org_id`):**
+
+| Table | Holds | Runtime grants |
+|---|---|---|
+| `external_provider_connections` | organization, connection ID, provider (`^[a-z][a-z0-9_]{1,62}$`), external account ID (nullable), status `ACTIVE`/`NEEDS_REAUTH`/`DISCONNECTED`, granted scopes, connected by/at, disconnected at, updated at | SELECT, INSERT; UPDATE on lifecycle columns only; no DELETE |
+| `external_provider_credentials` | envelope: ciphertext, payload nonce/tag, wrapped data key, wrap nonce/tag, key version, key check value, algorithm `AES-256-GCM`, credential type, created/rotated at | SELECT, INSERT, DELETE; UPDATE on the wrap columns only (rotation); the ciphertext is never updated in place |
+| `external_provider_credential_events` | append-only audit: event type, connection/credential ID, actor, key version | SELECT, INSERT; immutable via a trigger (owner included) |
+
+A composite foreign key (`organization_id, connection_id, provider`) keeps a credential's provider equal to its connection's. The design reduced the ADR's status list to the three statuses that have a writer. `revoked` is not a stored status: remote revocation is a connector action, not a local state.
+
+**Cryptography:** as decided above, with these implementation details.
+- The AAD is a canonical JSON array (`["samvardiq.provider-credential.v1", layer, organization, provider, credential ID, credential type(, key version)]`). JSON quoting makes it unambiguous.
+- The key version is bound on the wrap layer, which is the only layer it governs. Rotation therefore re-wraps the data key and never touches the encrypted secret.
+- The resolve path builds the AAD from the caller's organization, the connection's provider and the requested type, not from the row alone.
+- The tag length is pinned to 16 bytes, so a truncated tag is rejected.
+- A 16-byte key check value (HMAC-SHA256 of a fixed label under the master key) separates two failures. A wrong or missing key gives `key_unavailable`, an operator fault that changes no state. An altered or transplanted envelope gives `credential_invalid`, which moves the connection to NEEDS_REAUTH and is audited.
+
+**Authorization (no new model):**
+- Administration (connect, re-authorize, disconnect, inspect metadata) requires `principalType === 'human' && role === 'OWNER'`. This is the `canAdministerMembership` reading.
+- Plaintext use requires `principalType === 'service'`, i.e. a `TrustedOrganizationContext` from the unmodified `resolveTrustedContext` (ADR-IDENTITY-002, Candidate A). No human, OWNER included, can obtain plaintext.
+- Use is scoped to the context's organization by RLS, and any service principal of that organization may use its connections. Narrowing that to a specific service identity per connection or purpose is ADR-IDENTITY-002's deferred Candidate B, not built here.
+
+**Plaintext lifetime:** `useCredential(actor, connectionId, type, use)` passes the plaintext Buffer to the callback and zero-fills it when the callback settles. It never returns plaintext. This is best-effort only: JavaScript cannot guarantee erasure, because V8 or the callback (e.g. an HTTP header string) may hold copies until garbage collection.
+
+**Disconnection:** `disconnect` sets DISCONNECTED and deletes every ciphertext of the connection in one transaction, and is idempotent. It returns `remoteRevocation: 'NOT_ATTEMPTED'`: the provider connector must revoke remotely (using `useCredential`) *before* local disconnection. The generic layer never claims a remote revocation.
+
+**Audit:** this module uses its own append-only table rather than `identity_audit_events`, whose closed CHECK lists are scoped to identity, membership and provider-link events. The table follows the same pattern as `identity_audit_events` and `conversation_handoffs`: INSERT/SELECT only, an immutability trigger, RLS, identifiers only, and the same transaction as the change it records. Events recorded:
+- CONNECTION_CREATED, CREDENTIAL_STORED, CREDENTIAL_REPLACED, CREDENTIAL_DELETED and CONNECTION_DISCONNECTED (human OWNER actor);
+- CONNECTION_NEEDS_REAUTH (service actor);
+- CREDENTIAL_REWRAPPED (system actor).
+
+`key_unavailable` failures are not persisted, because they are operator faults with no state change.
+
+**Rotation:** `CredentialKeyRotation.rewrapOrganization` re-wraps one credential per transaction, conditional on the version it read. The runtime role cannot enumerate organizations, so the operator supplies them. `keyVersionUsage` and `assertKeyVersionRetirable` refuse to run on any connection subject to RLS, so they can never certify a still-referenced key as retirable.
+
+**Verification:** 29 unit tests and 21 real-PostgreSQL tests (threat matrix A–AT). The staging verifier now expects 20 tables, 5 triggers, 5 own functions, column-level UPDATE grants, envelope columns only in `external_provider_credentials`, and behavior check B16 (the credential service as `samvardiq_app`).

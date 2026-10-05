@@ -23,6 +23,7 @@ const projects = [
   'packages/clinic-cms-connector',
   'packages/application-services',
   'packages/communication-orchestration',
+  'packages/platform-credentials',
   'apps/api',
 ];
 const CA_REPO_PATH = 'certs/supabase-root-2021.crt';
