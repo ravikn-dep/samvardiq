@@ -568,3 +568,22 @@ Operations:
 - **Admin/migration access** stays operator-supplied per session (§12): `MIGRATION_DATABASE_URL` with `sslmode=verify-full&sslrootcert=<local CA path>`, set in the operator's own shell, never stored in Railway or the repository.
 
 Deferred (not W1D blockers): WhatsApp empty-token handshake fix (approved; Railway sets a non-empty `META_WEBHOOK_VERIFY_TOKEN` meanwhile); reduce host detail in the W1D identity log line; database-wide SSL enforcement (pre-production review); `service_role` narrowing; Data API exposed-schema decision; Supabase Auth setup; per-client rate limiting behind Railway's proxy; dev-only `brace-expansion` advisory; production infrastructure.
+
+## 27. CLINIC-W2D staging activation — communication migration 0002 (2026-10-05)
+
+**Status: active on staging.** Governed human-handoff ownership (communication architecture §33) runs on Railway staging against the migrated schema. Production not authorized, not deployed.
+
+**Deployment order used** (the migration is additive and safe for the old code; the new code needs the migration):
+
+1. Old code `10b8023` + old schema → **pre-migration audit** with `main`'s own verifier: structure 14/14 (16 tables, communication journal 2, D1 307 items identical), `samvardiq_app` authority digest unchanged since Gate 2, 0 rows. Admin connection `sslmode=verify-full` (TLS 1.3, certificate verified).
+2. **`npm run migrate:staging` logic** (`scripts/migrateSupabaseStaging.ts`) from validated commit `768476b` → only communication `0002_human_handoff_ownership` pending and applied; hardening re-applied (pins the new trigger function's `search_path`).
+3. Old code + new schema → **post-migration proof**: structure 14/14 (17 tables, communication journal 3, 4 governed triggers, 4 own functions, 13 tenant tables FORCE RLS, D1 333 items identical); authority diff = exactly `samvardiq_app` INSERT/SELECT on `conversation_handoffs`, its RLS+FORCE and tenant policy; behaviour suite (`--grant-set-role`) 21/21 including the W2D claim path, temporary SET grant revoked and verified. Railway (still `10b8023`) ACTIVE, `/health` 200, no schema errors.
+4. **`main` fast-forwarded** `10b8023 → 768476b` and pushed.
+5. New code + new schema → Railway auto-deployed `768476b` (Railway's GitHub deployment record: `sha 768476b…`, `samvardiq-staging / staging`, success; the UI label `bfa1b2b4` is Railway's deployment ID, not a Git revision). Dockerfile build pass, `Runtime DB identity confirmed … role=samvardiq_app`, listening on 8080, healthcheck and `/health` 200, no errors mentioning the new columns or table.
+6. **Runtime smoke and final audit**: behaviour suite 21/21 again from `main`; structure 14/14; authority snapshot identical to the post-migration reference; all 17 tables empty.
+
+The only persistent database change is migration `0002`; every synthetic verification row and temporary grant was removed. The admin credential file was deleted after the final audit.
+
+**Verifier inventory now:** 17 tables, 4 governed triggers (`conversation_handoffs_immutable` added), 4 own functions (`prevent_conversation_handoff_mutation` added), communication journal 3; counts in the verifier are derived from these lists. A future migration adding a table, trigger or function must update the same lists.
+
+**Rollback posture:** if a later W2D code deployment misbehaves, roll back the Railway deployment to `10b8023` — it runs correctly on the migrated schema. Do not drop `0002` while `conversation_handoffs` holds audit rows.

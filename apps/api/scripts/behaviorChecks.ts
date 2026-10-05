@@ -454,7 +454,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
         [comms.pool, `insert into conversations (organization_id, conversation_id, channel_id, external_contact_id, state, preferred_language, booking_state) values ('${ORG_A}', 'w1b-noctx', 'w1b-chan-A', 'w1b-c', 'AI_ACTIVE', 'en-IN', 'NEW')`],
       ];
       for (const [pool, text] of writes) await expectSqlState(pool.query(text), '42501', 'no-context write');
-      return '12 tables x 4 pools = 0 tenant rows visible (identity_audit_events: global events only, by design); 5 representative no-context writes = 42501';
+      return `${TENANT_TABLES.length} tables x ${allPools.length} pools = 0 tenant rows visible (identity_audit_events: global events only, by design); 5 representative no-context writes = 42501`;
     });
 
     await reporter.check('B13 synthetic-data-only: every persisted row belongs to a w1b- synthetic identifier', async () => {

@@ -148,7 +148,7 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
     return `matrix matches for ${EXPECTED_TABLES.length} tables`;
   });
 
-  await reporter.check('S5 triggers: the 3 governed triggers exist, enabled, BEFORE ROW, on the right table, calling the right function; all functions SECURITY INVOKER', async () => {
+  await reporter.check(`S5 triggers: the ${EXPECTED_TRIGGERS.length} governed triggers exist, enabled, BEFORE ROW, on the right table, calling the right function; all functions SECURITY INVOKER`, async () => {
     for (const trigger of EXPECTED_TRIGGERS) {
       const rows = await rowsOf(
         admin,
