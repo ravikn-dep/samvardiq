@@ -4,7 +4,7 @@
 
 **Depends on:** `ADR-DATA-001` (`ARCH-015`, PostgreSQL as canonical persistence, provider-portable), `ADR-IDENTITY-001` (`ARCH-016`, `TrustedOrganizationContext`, OWNER/MEMBER/VIEWER), `ADR-IDENTITY-002` (`ARCH-019`, service principals). Implements the credential parts of `docs/04_Architecture.md`'s Connector Framework ("token refresh behavior", "revocation handling"), Integration Data ("token status") and Sensitive Data ("connector credentials … highest level of protection").
 
-**Implementation status:** IMPLEMENTED AND VALIDATED LOCALLY by `PLATFORM-CREDENTIALS-W1` (`packages/platform-credentials`, migration `platform-credentials/0000_external_provider_credentials`, branch `platform-credentials-w1`). **Not yet activated on staging** — next: `PLATFORM-CREDENTIALS-W1-STAGING-ACTIVATION`. See "Implementation" at the end.
+**Implementation status:** IMPLEMENTED and **ACTIVE ON STAGING** (`PLATFORM-CREDENTIALS-W1`, `packages/platform-credentials`, migration `platform-credentials/0000_external_provider_credentials`; staging activation 2026-10-05/06, Railway on `0c7dabd`; evidence in `docs/infrastructure/SUPABASE_STAGING_RUNBOOK.md` §28). Dormant at runtime until a consumer ships; no master key provisioned. Production not authorized. See "Implementation" at the end.
 
 ---
 

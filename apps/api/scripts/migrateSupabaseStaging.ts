@@ -7,7 +7,7 @@
  * hardening documented in `supabaseHardening.ts`. Never seeds patient or
  * clinic data.
  *
- * Run from `apps/api/` (the only place in this repo where all four
+ * Run from `apps/api/` (the only place in this repo where all
  * PostgreSQL-owning packages are already installed dependencies, since
  * this repository has no root workspace):
  *
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     }
     throw error;
   }
-  console.log('\nAll four packages migrated successfully.');
+  console.log(`\nAll ${MIGRATION_STEPS.length} packages migrated successfully.`);
 
   console.log('--- supabase platform hardening: applying ---');
   const admin = connectAdmin(connectionString);

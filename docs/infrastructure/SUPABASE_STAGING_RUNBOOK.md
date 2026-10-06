@@ -588,21 +588,80 @@ The only persistent database change is migration `0002`; every synthetic verific
 
 **Rollback posture:** if a later W2D code deployment misbehaves, roll back the Railway deployment to `10b8023` — it runs correctly on the migrated schema. Do not drop `0002` while `conversation_handoffs` holds audit rows.
 
-## 28. PLATFORM-CREDENTIALS-W1 — credential store migration (pending activation)
+## 28. PLATFORM-CREDENTIALS-W1 staging activation — credential store migration (2026-10-05/06)
 
-**Status: implemented and validated locally on branch `platform-credentials-w1`; staging NOT migrated.** Governs `ARCH-020` (`docs/decisions/ADR-PLATFORM-001.md`); key operations in `PROVIDER_CREDENTIAL_KEYS_RUNBOOK.md`.
+**Status: active on staging.** ARCH-020's encrypted provider credential store (`docs/decisions/ADR-PLATFORM-001.md`) is migrated and verified on `samvardiq-staging`. Railway staging runs `0c7dabd`. The module is **dormant at runtime**: no route or startup path constructs it. **No provider credential master key was provisioned**, and none is needed until a consumer (GBP-W1) ships (`PROVIDER_CREDENTIAL_KEYS_RUNBOOK.md`). Google is not connected. Production is not authorized and not deployed.
 
-**What it adds:** a fifth migration step, `platform-credentials` (journal `drizzle_platform_credentials`, migration `0000_external_provider_credentials`). It is additive: three tables (`external_provider_connections`, `external_provider_credentials`, `external_provider_credential_events`), RLS + FORCE, column-level UPDATE grants, and one trigger with its function (`prevent_credential_event_mutation`).
+**Artifact applied:** `packages/platform-credentials/drizzle/0000_external_provider_credentials.sql` at `0c7dabd`, the fifth migration step (journal `drizzle_platform_credentials`). The working copy is CRLF (sha256 `013d62b7126c9896821d7144000e0c48875d695647b6d960ce84a82b06b9cadb`). With line endings normalized it equals the committed LF blob (sha256 `de15947adf56138bcd28cddb86de3086c074afd5da95bd15c46fed10d0c0934f`). All 17 tracked migration files were byte-identical before and after the activation; see `MIGRATION-PROVENANCE-LINE-ENDINGS` below. Every admin connection used `sslmode=verify-full` with the pinned CA (TLS 1.3, certificate verified).
 
-**Compatibility:**
-- **Old code + new schema:** safe. `main` never references the tables. `main`'s verifier will report the three new tables as unexpected (S1 and related checks), which is expected after migrating.
-- **New code + old schema:** the API runtime is unaffected, because no route or startup path uses the module and it needs no new Railway variable. The branch's verifier and migration runner expect the new schema.
-- **Order:** schema first.
+**Deployment order used** (schema first):
 
-**Activation sequence (requires explicit authorization):**
-1. Pre-audit from `main`: structure all pass, 17 tables.
-2. From the branch, run `npm run migrate:staging` logic: only `platform-credentials/0000` should be pending; re-apply hardening, which revokes PUBLIC on the new function and pins its `search_path`.
-3. Old code + new schema: run the branch's structure check (20 tables, 5 triggers, 5 own functions, column UPDATE grants, envelope columns only in `external_provider_credentials`) and its behaviour suite `--grant-set-role`, 17 checks including B16. B16 uses an ephemeral in-process key, and all its rows are truncated. Railway `/health` must be 200.
-4. Fast-forward `main`, let Railway deploy, then run the runtime smoke and a final audit.
+1. **Pre-audit, old code + old schema**, using `main`'s own verifier at `c96bcf1`:
+   - structure 14/14 (17 tables; journals 2/5/3/3; 4 triggers; 4 own functions; D1 333 items identical);
+   - authority digest `21784fb7ab26f4a8`, identical to the post-W2D reference;
+   - 0 rows.
+2. **`npm run migrate:staging` logic from `0c7dabd`:** exit 0. Only `platform-credentials/0000` was pending. Hardening was re-applied (PUBLIC execute revoked on the new function, `search_path` pinned).
+3. **Old code + new schema:**
+   - Branch verifier structure 14/14:
+     - 20 tables and 5 journals; S2 hashes match the CRLF artifact;
+     - 5 governed triggers and 5 own functions, all SECURITY INVOKER with a pinned `search_path`;
+     - 16 tenant tables with RLS enabled and forced, plus 4 platform-global tables;
+     - exact column-level UPDATE grants;
+     - envelope (`bytea`) columns exist only in `external_provider_credentials`;
+     - D1 403 catalog items identical to the reference.
+   - **Authority diff** (pre → post) is exactly the designed additions, with nothing removed and role attributes and memberships unchanged:
+     - 7 table grants, with no table-level UPDATE and no DELETE on connections or events;
+     - 11 column-level UPDATE grants;
+     - RLS enabled and forced on the three tables;
+     - three tenant policies whose predicate is identical to existing tenant policies.
+   - New authority digest: `e39f82df742a1a9a`.
+   - **Constraints:** primary keys; the provider-binding composite foreign key `(organization_id, connection_id, provider)`; the events → connections foreign key; status, disconnected, provider, scopes, type, algorithm, envelope-length and actor CHECKs; the unique keys.
+   - **Old-code behavior:** `main`'s own suite B1–B14 passed against the new schema. Its B15 failed only on the trigger count (`5 !== 4`): the anticipated new governed trigger, not drift. Cleanup had already completed.
+   - **Branch behavior suite:** 22/22, including **B16** (the credential service as `samvardiq_app`). The temporary SET grant was revoked and verified (R1–R3).
+   - **Railway:** the deployment still running `c96bcf1` was confirmed by the Founder: ACTIVE, `/health` 200, runtime DB identity `samvardiq_app`, no new errors, nothing mentioning the credential store.
+4. **Extended ARCH-020 staging proof** (16/16), using synthetic `w1b-` organizations and synthetic secrets, with no DDL:
+   - as `samvardiq_app`;
+   - OWNER-only administration (MEMBER, VIEWER and service refused) and no plaintext use by humans;
+   - service resolution only within its own organization;
+   - RLS hides other-org and no-context rows (cross-org insert gives 42501);
+   - grant boundaries: runtime gets 42501, and audit changes by the owner get P0001;
+   - mid-transaction failure: an audit insert blocked by a held lock rolls back the whole connect and surfaces only `CredentialStoreError` (SQLSTATE 55P03, no query, parameters or cause);
+   - tamper → `credential_invalid` → NEEDS_REAUTH (a service-attributed event) → `credential_unavailable`;
+   - local disconnect deletes the ciphertext and reports `remoteRevocation: NOT_ATTEMPTED`;
+   - no plaintext in any encoding across the tables, errors or audit;
+   - only the three credential tables were truncated, after proving every row synthetic.
+   - Afterwards: 0 rows in all 20 tables; digest `e39f82df742a1a9a`.
+5. **`main` fast-forwarded `c96bcf1 → 0c7dabd`** and pushed.
+6. **New code + new schema:** Railway auto-deployed. **Provenance comes from GitHub's deployment record**, not from Railway's UI label:
+   - deployment `6873955834`, `sha 0c7dabd4a9bde363468a66cf522977cc8c24bf4f`, environment `samvardiq-staging / staging`, creator `railway-app[bot]`;
+   - `in_progress` 2026-10-06 02:11:51Z, then `success` 02:13:32Z;
+   - commit status "samvardiq-staging - api: success".
+   - Founder-confirmed: ACTIVE, listening on 8080, `Runtime DB identity confirmed … role=samvardiq_app`, `/health` 200, no errors, nothing mentioning `external_provider`, `PROVIDER_CREDENTIAL` or a key ring.
+   - A `samvardiq_app` session was observed on the database right after the deployment.
+7. **Final audit from `main`:** structure 14/14 (20 tables, journals 2/5/3/3/1, D1 403 items identical); digest `e39f82df742a1a9a`; 0 rows in all 20 tables, including the three credential tables; no leftover temporary grant (S8).
 
-No master key is provisioned in Railway at this step.
+**Regression from `main`:** 494 unit / 192 integration / 39 web tests, 0 failures. Typecheck, lint and build pass in all 10 projects. The production dependency audit found 0 vulnerabilities in all 9 Node projects. The secret scan is clean.
+
+The only persistent database change is migration `platform-credentials/0000`. Every synthetic verification row and temporary grant was removed. The admin credential file was deleted after the final audit.
+
+**Verifier inventory now:**
+- 20 tables;
+- 5 governed triggers (`external_provider_credential_events_immutable` added);
+- 5 own functions (`prevent_credential_event_mutation` added);
+- 5 journals;
+- the column-level UPDATE expectations;
+- behavior checks B0–B16.
+
+**Rollback posture:** rolling back the Railway deployment to `c96bcf1` is safe, because it runs correctly on the migrated schema (step 3). Do not drop `platform-credentials/0000`.
+
+**Open follow-up — `MIGRATION-PROVENANCE-LINE-ENDINGS` (separately governed; deliberately not fixed here):**
+- **The problem:** Drizzle journal hashes are sha256 of the raw working-copy SQL, and `core.autocrlf=true` makes those bytes depend on checkout history. Staging holds:
+  - LF hashes for migrations never re-checked-out;
+  - CRLF hashes for communication `0002` and platform-credentials `0000`.
+- **Consequence:** S2 is reproducible only from a working copy with these exact bytes. A fresh clone would fail it.
+- **Future work must evaluate:**
+  - `.gitattributes` (`eol` for `*.sql`);
+  - canonical migration byte normalization;
+  - a governed reconciliation of existing staging journal hashes;
+  - Windows/Linux reproducibility.
+- Already-applied migration history must never be rewritten without that procedure.
