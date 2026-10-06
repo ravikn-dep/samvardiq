@@ -42,7 +42,8 @@ export class PostgresMessageContentRepository implements MessageContentRepositor
       const deleted = await tx
         .delete(communicationMessageContent)
         .where(and(eq(communicationMessageContent.organizationId, organizationId), lte(communicationMessageContent.purgeAfter, now)))
-        .returning();
+        // Identifiers only: the deleted raw text is never read back into memory.
+        .returning({ messageId: communicationMessageContent.messageId });
       return deleted.length;
     });
   }

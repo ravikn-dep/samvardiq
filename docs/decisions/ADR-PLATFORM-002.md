@@ -4,7 +4,7 @@
 
 **Depends on:** `ADR-DATA-001` (`ARCH-015`), `ADR-IDENTITY-001` (`ARCH-016`), `ADR-IDENTITY-002` (`ARCH-019`, service principals), `ADR-PLATFORM-001` (`ARCH-020`, credentials never in payloads). Implements `docs/04_Architecture.md`'s "Job Queue" (priority, scheduled execution, retry, delay, concurrency control, dead-letter, cancellation, timeout, organization isolation), "Scheduling Engine", "Idempotency" and "Retry Logic" sections, which are canonical requirements with no implementation today.
 
-**Implementation status:** QUEUE PRIMITIVE IMPLEMENTED AND VALIDATED LOCALLY by `PLATFORM-JOBS-W1` (`packages/platform-jobs`, migration `platform-jobs/0000_platform_jobs`, branch `platform-jobs-w1`). **No consumer wired yet:** the first consumer (communication retention purge) awaits a Founder decision on its execution authority (see "Implementation"). Not on staging; no worker or tick is running anywhere.
+**Implementation status:** IMPLEMENTED AND VALIDATED LOCALLY by `PLATFORM-JOBS-W1` (`packages/platform-jobs`, migration `platform-jobs/0000_platform_jobs`, branch `platform-jobs-w1`). The queue primitive is complete, and the first consumer, communication retention as Category B platform maintenance, is wired and proven. Not on staging. Worker and tick hosting is not configured (Founder hosting choice pending). See "Implementation".
 
 ---
 
@@ -158,8 +158,27 @@ It never returns payloads or organization IDs. The worker never logs; it emits s
 
 **Delivery guarantee:** at-least-once. Consumers must make their effects idempotent.
 
-**Pending Founder decision: authority of the first consumer.** The communication retention purge (`purgeExpiredMessageContent`, 30-day maximum, Founder CLINIC-W2 Decision 2) must delete expired content. The two approved rules give opposite answers when automation is disabled:
-- Running it as the organization's service principal through `resolveTrustedContext` (this ADR's integration rule, ADR-IDENTITY-002) ties deletion to the only service identities that exist: the WhatsApp channel principals. Suspending automation, or an inactive organization, would then stop the purge and keep raw content beyond the 30-day maximum.
-- This ADR also allows platform maintenance jobs with no organization. A maintenance purge, run per organization under that organization's RLS context with a `system` actor, keeps retention independent of automation status. It acts under no principal.
+**Founder clarification — two categories of background work (approved 2026-10-06, PLATFORM-JOBS-W1).** This applies this ADR's existing "platform-global maintenance jobs" allowance. It is not a new authority model, so no new ADR is needed.
 
-The purge is not wired until this is decided.
+- **Category A — organization business/integration work** (GBP sync, Meta automation, provider actions, recommendations):
+  - runs as the organization's provisioned service principal through the unmodified `resolveTrustedContext`;
+  - fails closed when that authority is absent or inactive (the "Tenant isolation and authority" section above, unchanged).
+- **Category B — mandatory platform maintenance**, currently exactly one: communication raw-message retention.
+  - Runs as `system` (no human, OWNER, MEMBER or channel principal is fabricated).
+  - Each job targets one explicit organization and runs under that organization's RLS context.
+  - The communication domain's own `purgeExpired` decides what is eligible.
+  - Does **not** depend on a channel service principal, automation being enabled, a provider connection, a channel being enabled, or the organization being active. Founder CLINIC-W2 Decision 2 caps raw content at 30 days.
+  - The exception is narrow: Category B grants no organization business capability.
+
+**First consumer — `communication.retention_purge`** (`packages/communication-orchestration/src/retentionMaintenance.ts`):
+- **Capability:** the handler holds one capability, `RetentionPurgeRepository.purgeExpired`. It never constructs a `TrustedOrganizationContext`; a proxy test proves it touches nothing else.
+- **Payload:** empty. The organization is the job's target column, and the hour lives only in the idempotency key `communication_retention:<hourStart>:<organizationId>`.
+- **Enumeration:** `SELECT DISTINCT organization_id FROM communication_channels`, including disabled channels. Raw content is only ever written under a context resolved from a channel's organization (`channelEventVerifier.ts`), and the runtime role cannot UPDATE or DELETE channel rows. Every organization that can hold purgeable content is therefore enumerated. **Operator rule:** never delete a channel row while its organization may still hold message content.
+- **Cadence:** hourly. `purge_after` is exactly 30 days after receipt, so content is deleted within about an hour of its boundary under normal operation, plus backoff on transient failure. No cadence can add margin before a zero-margin `purge_after`; tightening it would be a retention-policy decision.
+- **Missed ticks:** no back-fill is needed. Each run deletes everything already past `purge_after`, so the first run after any outage clears the whole backlog (tested).
+- **Failures:** retryable `retention_purge_failed`, up to 5 attempts, then DEAD. DEAD runs are visible in `JobQueue.stats()` (`dead`, `deadFailureClasses`). The next hourly job re-attempts the same obligation, so a DEAD run never loses it.
+  - **Alerting is not built:** a future operational alert must fire on any DEAD `communication.retention_purge` job, or on no successful run for an organization in 24 hours.
+- **Evidence:** the SUCCEEDED or DEAD `platform_jobs` row records the operation type, target organization, period, attempts, outcome and time. Purged-row counts are not persisted. No content, message identifiers or contact data are recorded anywhere.
+- **Privacy:** `purgeExpired` now returns only message identifiers to count deletions. It previously loaded the deleted raw text back into memory.
+
+**Worker and tick hosting:** not configured. It needs a Founder choice before activation; see the PLATFORM-JOBS-W1 report.

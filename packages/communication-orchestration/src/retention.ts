@@ -13,13 +13,10 @@ export function computePurgeAfter(from: Date = new Date()): string {
 }
 
 /**
- * The deterministic purge capability section 15 requires IN PLACE of a
- * real production scheduler. This is NOT itself a scheduler — nothing in
- * this codebase invokes it periodically. Production deployment must wire
- * this to an actual cron/scheduled-job mechanism (deferred — see
- * docs/integrations/CLINIC_W2_COMMUNICATION_ARCHITECTURE.md's "Known
- * Limitations"); calling it manually or via a test is what proves the
- * mechanism itself is correct.
+ * The deterministic purge capability (section 15). It is invoked hourly per
+ * organization by the `communication.retention_purge` platform-maintenance job
+ * (retentionMaintenance.ts, ARCH-021); this interface is that job's ONLY
+ * capability.
  */
 export interface RetentionPurgeRepository {
   purgeExpired(organizationId: string, now?: Date): Promise<number>;

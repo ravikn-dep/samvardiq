@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 
 import type { CommunicationChannelRepository } from '../channelRepository.js';
+import type { RetentionOrganizationSource } from '../retentionMaintenance.js';
 import type { CommunicationChannel, CommunicationProviderName } from '../types.js';
 import type { Database } from './client.js';
 import { communicationChannels } from './schema.js';
@@ -30,8 +31,21 @@ function toChannel(row: typeof communicationChannels.$inferSelect): Communicatio
  * verified by a dedicated integration test proving a duplicate
  * `external_channel_id` is rejected at the database level.
  */
-export class PostgresCommunicationChannelRepository implements CommunicationChannelRepository {
+export class PostgresCommunicationChannelRepository implements CommunicationChannelRepository, RetentionOrganizationSource {
   constructor(private readonly db: Database) {}
+
+  /**
+   * Retention enumeration (PLATFORM-JOBS-W1): every organization that has
+   * EVER had a channel — enabled or disabled. Raw content is only ever
+   * written under a context resolved from a channel's organization
+   * (channelEventVerifier.ts), and the runtime role cannot UPDATE or DELETE
+   * channel rows, so this set always covers every organization that can hold
+   * purgeable content. Identifiers only; no content is read.
+   */
+  async listOrganizationIdsWithChannels(): Promise<string[]> {
+    const rows = await this.db.selectDistinct({ organizationId: communicationChannels.organizationId }).from(communicationChannels).orderBy(communicationChannels.organizationId);
+    return rows.map((r) => r.organizationId);
+  }
 
   async getEnabledByExternalChannelId(externalChannelId: string): Promise<CommunicationChannel | null> {
     const rows = await this.db

@@ -7,7 +7,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build:deps": "npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance && npm run build --prefix ../data-foundation && npm run build --prefix ../identity-access && npm run build --prefix ../clinic-cms-connector && npm run build --prefix ../application-services",
+    "build:deps": "npm run build --prefix ../platform-jobs && npm run build --prefix ../marketing-intelligence && npm run build --prefix ../approval-governance && npm run build --prefix ../data-foundation && npm run build --prefix ../identity-access && npm run build --prefix ../clinic-cms-connector && npm run build --prefix ../application-services",
     "pretypecheck": "npm run build:deps",
     "typecheck": "tsc -p tsconfig.json",
     "prebuild": "npm run build:deps",
@@ -22,6 +22,7 @@
     "@samvardiq/application-services": "file:../application-services",
     "@samvardiq/clinic-cms-connector": "file:../clinic-cms-connector",
     "@samvardiq/identity-access": "file:../identity-access",
+    "@samvardiq/platform-jobs": "file:../platform-jobs",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.13.1"
   },
