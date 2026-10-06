@@ -1784,7 +1784,7 @@ Durable Background Jobs and Scheduling
 
 ### Status
 
-Approved
+Approved. Queue primitive implemented and validated locally by PLATFORM-JOBS-W1 (`packages/platform-jobs`, 6 October 2026); first consumer pending a Founder decision on its authority; not on staging. See `ADR-PLATFORM-002.md` → Implementation.
 
 ### Category
 

@@ -4,7 +4,7 @@
 
 **Depends on:** `ADR-DATA-001` (`ARCH-015`), `ADR-IDENTITY-001` (`ARCH-016`), `ADR-IDENTITY-002` (`ARCH-019`, service principals), `ADR-PLATFORM-001` (`ARCH-020`, credentials never in payloads). Implements `docs/04_Architecture.md`'s "Job Queue" (priority, scheduled execution, retry, delay, concurrency control, dead-letter, cancellation, timeout, organization isolation), "Scheduling Engine", "Idempotency" and "Retry Logic" sections, which are canonical requirements with no implementation today.
 
-**Implementation status:** not implemented. This ADR governs `PLATFORM-JOBS-W1`.
+**Implementation status:** QUEUE PRIMITIVE IMPLEMENTED AND VALIDATED LOCALLY by `PLATFORM-JOBS-W1` (`packages/platform-jobs`, migration `platform-jobs/0000_platform_jobs`, branch `platform-jobs-w1`). **No consumer wired yet:** the first consumer (communication retention purge) awaits a Founder decision on its execution authority (see "Implementation"). Not on staging; no worker or tick is running anywhere.
 
 ---
 
@@ -101,3 +101,65 @@ Per job type and organization: queued, running, retry-waiting and dead counts; o
 - New platform module and one platform-global table (`PLATFORM-JOBS-W1`), with staging verifier inventory updates and schema-first deployment.
 - A worker process and a tick trigger must be deployed on the current host alongside the API.
 - Every consumer must document its idempotency key and failure classification; the retention purge loop and GBP sync become the first consumers.
+
+---
+
+## Implementation (PLATFORM-JOBS-W1, 2026-10-06)
+
+Provider-neutral `packages/platform-jobs` (journal `drizzle_platform_jobs`). It knows no provider, no communication content and no healthcare logic.
+
+**Table `platform_jobs` (platform-global, identifiers only):**
+- **Columns:** `job_id`, `job_type`, `organization_id` (NULL only for platform maintenance), `idempotency_key`, `payload`, `status`, `run_after`, `attempts`, `max_attempts`, `lease_id` (a fresh fencing UUID per claim), `lease_owner` (diagnosis only), `lease_expires_at`, `last_failure_class`, `created_at`, `started_at`, `finished_at`, `updated_at`.
+- **Constraints:**
+  - UNIQUE `(job_type, idempotency_key)`;
+  - status CHECK;
+  - payload must be a JSON object of at most 1024 bytes;
+  - `attempts ≤ max_attempts ≤ 25`;
+  - a lease exists exactly while RUNNING;
+  - `finished_at` is set exactly when SUCCEEDED or DEAD;
+  - the failure class must be a snake_case code.
+- **Runtime grants:** INSERT and SELECT, plus UPDATE on the lifecycle columns only. No DELETE. Type, organization, key and payload cannot be rewritten.
+- Like the other platform-global tables it has no tenant RLS policy in the migration. Supabase hardening enables RLS with the `samvardiq_app`-scoped policy.
+
+**Payloads (identifiers only, enforced structurally):**
+- Each job type declares an allow-list of keys of kind `id`, `date` or `int`.
+- An `id` matches `^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$`: no spaces, quotes or free text.
+- Key names suggesting secrets, contact, patient or content data are refused even at registration. Recognizable credential shapes (JWT, Google, Meta, Stripe, GitHub, AWS) are refused as values.
+- At most 8 keys and 1024 bytes, validated before persistence and again before a handler runs.
+
+**Lifecycle (single conditional statements, no general status setter):**
+- `PENDING → RUNNING → SUCCEEDED`;
+- `RUNNING → RETRY_WAIT → RUNNING`;
+- `RUNNING → DEAD`.
+
+**Claim:** one `UPDATE … FROM (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` selects due PENDING or RETRY_WAIT work, or a RUNNING job whose lease expired (crash recovery). It increments `attempts` and sets a new `lease_id` and expiry atomically. An expired lease with no attempts left becomes DEAD (`lease_expired`), so a job that kills its worker cannot loop. The database clock alone decides eligibility.
+
+**Fencing:** renew, complete and fail all require `lease_id = <mine> AND status = 'RUNNING'`. A reclaimed worker's late success, failure or renewal is refused, and the worker aborts its handler's signal when renewal fails.
+
+**Retries:** a handler throws `JobFailure('retryable' | 'permanent', '<snake_case_class>')`.
+- Retryable → RETRY_WAIT after `30 s·2^(attempt−1)` ±20% jitter, capped at 1 h.
+- Permanent, or attempts exhausted → DEAD.
+- Any other error → retryable `unhandled_error`; its message is never stored or emitted.
+- DEAD is terminal and retained. Nothing replays it automatically, and pruning and replay tooling are deferred.
+
+**Scheduling:** `runScheduleTick(queue, schedules, now)` uses code-defined fixed periods. The idempotency key `<schedule>:<periodStart>:<target>` makes duplicate, late and concurrent ticks collapse to one job. A missed period is not back-filled. What invokes the tick is a hosting detail; no Railway trigger is configured.
+
+**Authority:** a handler receives only `{jobId, jobType, organizationId, payload, attempt, signal}` and must re-resolve its own authority. The job grants nothing.
+
+**Observability:** `JobQueue.stats()` reports, per job type:
+- counts by status;
+- stale leases;
+- oldest due age;
+- next run time;
+- maximum active attempts;
+- DEAD failure classes.
+
+It never returns payloads or organization IDs. The worker never logs; it emits sanitized events (identifiers and codes) to an optional hook.
+
+**Delivery guarantee:** at-least-once. Consumers must make their effects idempotent.
+
+**Pending Founder decision: authority of the first consumer.** The communication retention purge (`purgeExpiredMessageContent`, 30-day maximum, Founder CLINIC-W2 Decision 2) must delete expired content. The two approved rules give opposite answers when automation is disabled:
+- Running it as the organization's service principal through `resolveTrustedContext` (this ADR's integration rule, ADR-IDENTITY-002) ties deletion to the only service identities that exist: the WhatsApp channel principals. Suspending automation, or an inactive organization, would then stop the purge and keep raw content beyond the 30-day maximum.
+- This ADR also allows platform maintenance jobs with no organization. A maintenance purge, run per organization under that organization's RLS context with a `system` actor, keeps retention independent of automation status. It acts under no principal.
+
+The purge is not wired until this is decided.

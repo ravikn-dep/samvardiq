@@ -17,7 +17,7 @@ export const EXPECTED_TABLES = [
   'approval_records', 'approval_requests', 'clinic_cms_connections', 'clinic_cms_connector_evidence', 'communication_channels',
   'communication_message_content', 'communication_messages', 'conversation_handoffs', 'conversations', 'external_provider_connections',
   'external_provider_credential_events', 'external_provider_credentials', 'goals', 'identities', 'identity_audit_events',
-  'identity_provider_links', 'organization_memberships', 'organizations', 'recommendations', 'webhook_event_dedup',
+  'identity_provider_links', 'organization_memberships', 'organizations', 'platform_jobs', 'recommendations', 'webhook_event_dedup',
 ] as const;
 
 /** Tenant-scoped tables: FORCE RLS + at least one policy keyed on the organization (or, for memberships, identity) GUC. */
@@ -44,6 +44,8 @@ export const EXPECTED_APP_PRIVILEGES: Record<string, string> = {
   identity_provider_links: 'INSERT,SELECT',
   organization_memberships: 'INSERT,SELECT,UPDATE',
   organizations: 'DELETE,INSERT,SELECT,UPDATE',
+  // PLATFORM-JOBS-W1: lifecycle UPDATE is column-level only (EXPECTED_APP_COLUMN_UPDATES); no DELETE.
+  platform_jobs: 'INSERT,SELECT',
   recommendations: 'DELETE,INSERT,SELECT,UPDATE',
   webhook_event_dedup: 'INSERT,SELECT',
 };
@@ -54,12 +56,14 @@ export const EXPECTED_JOURNALS: Record<string, { schema: string; migrations: num
   'clinic-cms-connector': { schema: 'drizzle_clinic_cms_connector', migrations: 3 },
   'communication-orchestration': { schema: 'drizzle_communication_orchestration', migrations: 3 },
   'platform-credentials': { schema: 'drizzle_platform_credentials', migrations: 1 },
+  'platform-jobs': { schema: 'drizzle_platform_jobs', migrations: 1 },
 };
 
 /** Column-level UPDATE grants (PLATFORM-CREDENTIALS-W1): lifecycle/wrap columns only — never a ciphertext or an identity column. */
 export const EXPECTED_APP_COLUMN_UPDATES: Record<string, string> = {
   external_provider_connections: 'disconnected_at,external_account_id,granted_scopes,status,updated_at',
   external_provider_credentials: 'key_check,key_version,rotated_at,wrap_nonce,wrap_tag,wrapped_key',
+  platform_jobs: 'attempts,finished_at,last_failure_class,lease_expires_at,lease_id,lease_owner,run_after,started_at,status,updated_at',
 };
 
 export const EXPECTED_TRIGGERS = [
@@ -214,7 +218,7 @@ export async function runStructureChecks(admin: AdminPostgres, reporter: Reporte
       assert.equal(row.policy_names, PLATFORM_GLOBAL_POLICY, `${table}: exactly the samvardiq_app-scoped policy`);
     }
     const policies = await rowsOf(admin, `select tablename, roles::text as roles, qual, with_check from pg_policies where schemaname = 'public' and policyname = $1`, [PLATFORM_GLOBAL_POLICY]);
-    assert.equal(policies.length, 4);
+    assert.equal(policies.length, PLATFORM_GLOBAL_TABLES.length);
     assert.ok(policies.every((p) => p.roles === '{samvardiq_app}'), 'permissive policy targets samvardiq_app only, never PUBLIC/anon/authenticated');
     // Tenant policies must key on the trusted GUCs — never `true`/PUBLIC.
     const tenantPolicies = await rowsOf(admin, `select tablename, qual, with_check from pg_policies where schemaname = 'public' and policyname <> $1`, [PLATFORM_GLOBAL_POLICY]);

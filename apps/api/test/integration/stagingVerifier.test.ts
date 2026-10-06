@@ -53,7 +53,7 @@ test('behaviour suite passes end to end as samvardiq_app via direct login, and c
   const reporter = new Reporter();
   await runBehaviorSuite(hardened.owner, connectDirect(hardened.appUrl), reporter);
   assertAllPassed(reporter);
-  assert.equal(reporter.results.length, 17, 'B0-B16');
+  assert.equal(reporter.results.length, 18, 'B0-B17');
 });
 
 test('behaviour suite passes identically via the SET ROLE strategy used against staging, and is repeatable (cleanup left every table empty)', async () => {

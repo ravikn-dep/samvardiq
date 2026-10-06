@@ -1,0 +1,31 @@
+{
+  "name": "@samvardiq/platform-jobs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral durable PostgreSQL job queue (ARCH-021, ADR-PLATFORM-002): idempotent enqueue, SKIP LOCKED claims with fenced leases, bounded retry with backoff, DEAD terminal state, and a code-defined schedule tick. At-least-once; consumers own idempotent business effects and their own authority.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "node --import tsx --test --test-concurrency=1 \"test/integration/**/*.test.ts\"",
+    "lint": "eslint src test",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "embedded-postgres": "18.4.0-beta.17",
+    "eslint": "^9.15.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}

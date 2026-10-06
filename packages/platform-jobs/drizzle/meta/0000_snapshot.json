@@ -1,0 +1,202 @@
+{
+  "id": "cd9aa2c4-6156-4006-b3fc-875348e70435",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.platform_jobs": {
+      "name": "platform_jobs",
+      "schema": "",
+      "columns": {
+        "job_id": {
+          "name": "job_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "job_type": {
+          "name": "job_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_after": {
+          "name": "run_after",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "max_attempts": {
+          "name": "max_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lease_id": {
+          "name": "lease_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_owner": {
+          "name": "lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_failure_class": {
+          "name": "last_failure_class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "platform_jobs_due_idx": {
+          "name": "platform_jobs_due_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_after",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "platform_jobs_idempotency_key": {
+          "name": "platform_jobs_idempotency_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "job_type",
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "platform_jobs_status_check": {
+          "name": "platform_jobs_status_check",
+          "value": "\"platform_jobs\".\"status\" IN ('PENDING','RUNNING','RETRY_WAIT','SUCCEEDED','DEAD')"
+        },
+        "platform_jobs_type_check": {
+          "name": "platform_jobs_type_check",
+          "value": "\"platform_jobs\".\"job_type\" ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$' AND char_length(\"platform_jobs\".\"job_type\") <= 64"
+        },
+        "platform_jobs_key_check": {
+          "name": "platform_jobs_key_check",
+          "value": "char_length(\"platform_jobs\".\"idempotency_key\") BETWEEN 1 AND 200"
+        },
+        "platform_jobs_payload_check": {
+          "name": "platform_jobs_payload_check",
+          "value": "jsonb_typeof(\"platform_jobs\".\"payload\") = 'object' AND octet_length(\"platform_jobs\".\"payload\"::text) <= 1024"
+        },
+        "platform_jobs_attempts_check": {
+          "name": "platform_jobs_attempts_check",
+          "value": "\"platform_jobs\".\"attempts\" >= 0 AND \"platform_jobs\".\"max_attempts\" BETWEEN 1 AND 25 AND \"platform_jobs\".\"attempts\" <= \"platform_jobs\".\"max_attempts\""
+        },
+        "platform_jobs_lease_check": {
+          "name": "platform_jobs_lease_check",
+          "value": "(\"platform_jobs\".\"status\" = 'RUNNING') = (\"platform_jobs\".\"lease_id\" IS NOT NULL AND \"platform_jobs\".\"lease_owner\" IS NOT NULL AND \"platform_jobs\".\"lease_expires_at\" IS NOT NULL)\n          AND (\"platform_jobs\".\"lease_id\" IS NULL) = (\"platform_jobs\".\"lease_owner\" IS NULL) AND (\"platform_jobs\".\"lease_id\" IS NULL) = (\"platform_jobs\".\"lease_expires_at\" IS NULL)"
+        },
+        "platform_jobs_finished_check": {
+          "name": "platform_jobs_finished_check",
+          "value": "(\"platform_jobs\".\"status\" IN ('SUCCEEDED','DEAD')) = (\"platform_jobs\".\"finished_at\" IS NOT NULL)"
+        },
+        "platform_jobs_failure_class_check": {
+          "name": "platform_jobs_failure_class_check",
+          "value": "\"platform_jobs\".\"last_failure_class\" IS NULL OR \"platform_jobs\".\"last_failure_class\" ~ '^[a-z][a-z0-9_]{0,62}$'"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -22,7 +22,7 @@
  *  - local rehearsal: a direct login as samvardiq_app, or SET ROLE as superuser.
  */
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { PostgresApprovalRepository, PostgresGoalRepository, PostgresOrganizationRepository, PostgresRecommendationRepository, createPostgresClient as createDataFoundation } from '@samvardiq/data-foundation/dist/postgres/index.js';
 import { PostgresIdentityAuditRepository, PostgresIdentityProviderLinkRepository, PostgresIdentityRepository, PostgresMembershipRepository, createPostgresClient as createIdentity } from '@samvardiq/identity-access/dist/postgres/index.js';
@@ -31,6 +31,7 @@ import { PostgresClinicCmsConnectionRepository, PostgresConnectorAuditRepository
 import { PostgresCommunicationChannelRepository, PostgresConversationRepository, PostgresMessageContentRepository, PostgresMessageRepository, PostgresWebhookEventDedupRepository, createPostgresClient as createComms } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
 import { computePurgeAfter } from '@samvardiq/communication-orchestration';
 import { ACTIVE_KEY_VERSION_ENV, MASTER_KEYS_ENV, MasterKeyRing, ProviderCredentialService, createPostgresClient as createCredentials } from '@samvardiq/platform-credentials';
+import { JobQueue, JobRegistry, createPostgresClient as createJobs } from '@samvardiq/platform-jobs';
 
 import { EXPECTED_TABLES, EXPECTED_TRIGGERS, TENANT_TABLES } from './structureChecks.js';
 import { Reporter, sanitizeError, type AdminPostgres } from './stagingDb.js';
@@ -111,6 +112,7 @@ async function assertOnlySynthetic(admin: AdminPostgres): Promise<void> {
     ['conversations', 'organization_id'], ['conversation_handoffs', 'organization_id'], ['communication_messages', 'organization_id'], ['communication_message_content', 'organization_id'], ['communication_channels', 'organization_id'],
     ['identities', 'identity_id'], ['identity_provider_links', 'identity_id'], ['webhook_event_dedup', 'external_event_id'],
     ['external_provider_connections', 'organization_id'], ['external_provider_credentials', 'organization_id'], ['external_provider_credential_events', 'organization_id'],
+    ['platform_jobs', 'idempotency_key'],
   ];
   assert.equal(probes.length, EXPECTED_TABLES.length);
   for (const [table, expression] of probes) {
@@ -137,6 +139,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
   const cms = connect((config) => createCms(config));
   const comms = connect((config) => createComms(config));
   const cred = connect((config) => createCredentials(config));
+  const jobs = connect((config) => createJobs(config));
 
   try {
     const organizations = new PostgresOrganizationRepository(df.db);
@@ -156,7 +159,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     const content = new PostgresMessageContentRepository(comms.db);
     const dedup = new PostgresWebhookEventDedupRepository(comms.db);
     const pools: Record<string, Pool> = {
-      'data-foundation': df.pool, 'identity-access': idn.pool, 'clinic-cms-connector': cms.pool, 'communication-orchestration': comms.pool, 'platform-credentials': cred.pool,
+      'data-foundation': df.pool, 'identity-access': idn.pool, 'clinic-cms-connector': cms.pool, 'communication-orchestration': comms.pool, 'platform-credentials': cred.pool, 'platform-jobs': jobs.pool,
     };
 
     let roleOk = false;
@@ -470,6 +473,28 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       return 'connect/use/refuse/disconnect as samvardiq_app; ciphertext-only at rest; cross-org 0 rows; ciphertext rewrite = 42501; audit owner DELETE = P0001';
     });
 
+    // ---- PLATFORM-JOBS-W1 (ARCH-021) ----------------------------------------------------------------------------------
+    await reporter.check('B17 ARCH-021 job queue as the runtime role: idempotent enqueue, one claim under contention, fenced completion, identifiers-only payload, immutable job identity', async () => {
+      const registry = new JobRegistry().register({ type: 'w1b.synthetic', scope: 'organization', payload: { period: 'date' }, maxAttempts: 2, handle: async () => undefined });
+      const queue = new JobQueue(jobs.db, registry);
+      const input = { type: 'w1b.synthetic', organizationId: ORG_A, idempotencyKey: 'w1b-job-1', payload: { period: '2026-01-01' } };
+      const first = await queue.enqueue(input);
+      const again = await Promise.all([1, 2, 3].map(() => queue.enqueue(input)));
+      assert.ok(first.created && again.every((r) => !r.created && r.jobId === first.jobId), 'one logical job');
+      await assert.rejects(queue.enqueue({ ...input, idempotencyKey: 'w1b-job-2', payload: { period: '2026-01-01', note: 'free text' } }), (e: Error) => e.constructor.name === 'InvalidJobError');
+      const claims = await Promise.all([1, 2, 3, 4].map((i) => queue.claim(`w1b-worker-${i}`, 30_000)));
+      const won = claims.filter((c) => c !== null);
+      assert.equal(won.length, 1, 'exactly one claim');
+      assert.equal(await queue.complete(first.jobId, randomUUID()), false, 'a foreign lease cannot complete');
+      assert.equal(await queue.complete(first.jobId, won[0]!.leaseId), true);
+      await expectSqlState(jobs.pool.query(`update platform_jobs set payload = '{}'::jsonb`), '42501', 'runtime payload rewrite');
+      await expectSqlState(jobs.pool.query(`update platform_jobs set organization_id = '${ORG_B}'`), '42501', 'runtime organization rewrite');
+      await expectSqlState(jobs.pool.query(`delete from platform_jobs`), '42501', 'runtime delete');
+      const state = (await admin.pool.query(`select status, attempts from public.platform_jobs where idempotency_key = 'w1b-job-1'`)).rows[0];
+      assert.deepEqual({ ...state }, { status: 'SUCCEEDED', attempts: 1 });
+      return 'enqueue x4 = 1 job; free-text payload rejected; 4 contenders = 1 claim; foreign lease refused; payload/org rewrite and DELETE = 42501';
+    });
+
     // ---- missing organization context ------------------------------------------------------------------------------
     await reporter.check(`B12 missing-context fail-closed: all ${TENANT_TABLES.length} populated tenant tables return zero rows with no context, and writes are rejected`, async () => {
       const allPools = Object.values(pools);
@@ -508,7 +533,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     });
   } finally {
     // ---- cleanup (always) ------------------------------------------------------------------------------------------
-    await Promise.allSettled([df, idn, cms, comms, cred].map((client) => (client.pool as Pool).end()));
+    await Promise.allSettled([df, idn, cms, comms, cred, jobs].map((client) => (client.pool as Pool).end()));
     await reporter.check('B15 cleanup: only synthetic rows exist (else refuse), then all removed; tables empty; governed triggers still enabled', async () => {
       // Re-proven here, not trusted from B0/B13: if the suite aborted early or anything else wrote meanwhile, never truncate non-synthetic data.
       await assertOnlySynthetic(admin);

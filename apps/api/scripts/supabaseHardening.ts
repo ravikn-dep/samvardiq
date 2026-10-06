@@ -63,7 +63,7 @@
  */
 
 /** Tables intentionally designed without tenant RLS (see each package's schema docs). */
-export const PLATFORM_GLOBAL_TABLES = ['identities', 'identity_provider_links', 'communication_channels', 'webhook_event_dedup'] as const;
+export const PLATFORM_GLOBAL_TABLES = ['identities', 'identity_provider_links', 'communication_channels', 'webhook_event_dedup', 'platform_jobs'] as const;
 
 /** Trigger functions created by the package migrations. */
 export const OWN_FUNCTIONS = ['enforce_approval_request_goal_consistency', 'prevent_approval_record_mutation', 'prevent_identity_audit_event_mutation', 'prevent_conversation_handoff_mutation', 'prevent_credential_event_mutation'] as const;

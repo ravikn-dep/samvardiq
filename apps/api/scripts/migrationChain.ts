@@ -13,6 +13,7 @@ import { createPostgresClient as createIdentityClient, runMigrations as migrateI
 import { createPostgresClient as createClinicConnectorClient, runMigrations as migrateClinicConnector } from '@samvardiq/clinic-cms-connector/dist/postgres/client.js';
 import { createPostgresClient as createCommsClient, runMigrations as migrateComms } from '@samvardiq/communication-orchestration/dist/postgres/client.js';
 import { createPostgresClient as createCredentialsClient, runMigrations as migrateCredentials } from '@samvardiq/platform-credentials/dist/postgres/client.js';
+import { createPostgresClient as createJobsClient, runMigrations as migrateJobs } from '@samvardiq/platform-jobs/dist/postgres/client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -58,6 +59,12 @@ export const MIGRATION_STEPS: MigrationStep[] = [
     migrationsFolder: path.resolve(__dirname, '../../../packages/platform-credentials/drizzle'),
     createClient: createCredentialsClient as MigrationStep['createClient'],
     runMigrations: migrateCredentials as MigrationStep['runMigrations'],
+  },
+  {
+    packageName: 'platform-jobs',
+    migrationsFolder: path.resolve(__dirname, '../../../packages/platform-jobs/drizzle'),
+    createClient: createJobsClient as MigrationStep['createClient'],
+    runMigrations: migrateJobs as MigrationStep['runMigrations'],
   },
 ];
 
