@@ -26,6 +26,16 @@ export interface ApiConfig {
    * per-role pool size (staging Session Pooler: 15). Unset = 3, never pg's 10.
    */
   databasePoolMax: number;
+  /**
+   * PLATFORM-JOBS-W1 hosting (Option A), independently switchable. Absent =
+   * false; only the exact strings "true"/"false" are accepted — anything else
+   * refuses startup (same convention as TRUST_PROXY), so a typo can never
+   * silently enable execution.
+   * - jobsWorkerEnabled: this process may claim and execute durable jobs.
+   * - jobsSchedulerEnabled: this process may run schedule ticks that enqueue due jobs.
+   */
+  jobsWorkerEnabled: boolean;
+  jobsSchedulerEnabled: boolean;
 }
 
 export class ConfigError extends Error {}
@@ -58,11 +68,11 @@ function parseAllowedOrigins(raw: string | undefined): string[] {
   return origins;
 }
 
-function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
+function parseBoolean(raw: string | undefined, fallback: boolean, name = 'value'): boolean {
   if (raw === undefined) return fallback;
   if (raw === 'true') return true;
   if (raw === 'false') return false;
-  throw new ConfigError(`Expected "true" or "false", got ${JSON.stringify(raw)}`);
+  throw new ConfigError(`${name}: expected "true" or "false", got ${JSON.stringify(raw)}`);
 }
 
 /** Typo guard, not a capacity budget: the real limit is environment-specific (see `databasePoolMax`). */
@@ -101,5 +111,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ApiConf
       windowMs: env.RATE_LIMIT_WINDOW_MS ? Number(env.RATE_LIMIT_WINDOW_MS) : 60_000,
     },
     databasePoolMax: parseDatabasePoolMax(env.DATABASE_POOL_MAX),
+    jobsWorkerEnabled: parseBoolean(env.JOBS_WORKER_ENABLED, false, 'JOBS_WORKER_ENABLED'),
+    jobsSchedulerEnabled: parseBoolean(env.JOBS_SCHEDULER_ENABLED, false, 'JOBS_SCHEDULER_ENABLED'),
   };
 }

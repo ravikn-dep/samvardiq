@@ -77,7 +77,21 @@ test('runtimePoolConfig carries the budget and a finite acquisition timeout', ()
 test('the composition root gives every runtime pool the bounded config (no pool falls back to pg defaults)', () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
   const calls = [...source.matchAll(/\bcreate\w*Client\(([^)]*)\)/g)].map((m) => m[1]);
-  assert.deepEqual(calls, ['poolConfig', 'poolConfig', 'poolConfig', 'poolConfig']);
+  // Four package pools, plus the PLATFORM-JOBS-W1 queue pool (single connection, only when a jobs flag is on).
+  assert.deepEqual(calls, ['poolConfig', 'poolConfig', 'poolConfig', 'poolConfig', '{ ...poolConfig, max: 1 }']);
   assert.match(source, /const poolConfig = runtimePoolConfig\(config\);/);
   assert.doesNotMatch(source, /new Pool\(/);
+});
+
+test('PLATFORM-JOBS-W1: worker and scheduler flags are independent and fail closed — absent = off, only exact "true" enables, anything else refuses startup', () => {
+  const load = (env: Record<string, string>) => loadConfigFromEnv(env as unknown as NodeJS.ProcessEnv);
+  assert.deepEqual([load({}).jobsWorkerEnabled, load({}).jobsSchedulerEnabled], [false, false]);
+  assert.deepEqual([load({ JOBS_WORKER_ENABLED: 'true' }).jobsWorkerEnabled, load({ JOBS_WORKER_ENABLED: 'true' }).jobsSchedulerEnabled], [true, false]);
+  assert.deepEqual([load({ JOBS_SCHEDULER_ENABLED: 'true' }).jobsWorkerEnabled, load({ JOBS_SCHEDULER_ENABLED: 'true' }).jobsSchedulerEnabled], [false, true]);
+  assert.equal(load({ JOBS_WORKER_ENABLED: 'false', JOBS_SCHEDULER_ENABLED: 'false' }).jobsWorkerEnabled, false);
+  for (const name of ['JOBS_WORKER_ENABLED', 'JOBS_SCHEDULER_ENABLED']) {
+    for (const raw of ['TRUE', 'True', '1', 'yes', 'on', ' true', 'true ', '', 'enabled']) {
+      assert.throws(() => load({ [name]: raw }), (e: unknown) => e instanceof ConfigError && e.message.startsWith(`${name}:`), `${name}=${JSON.stringify(raw)}`);
+    }
+  }
 });

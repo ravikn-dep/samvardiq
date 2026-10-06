@@ -27,9 +27,11 @@ import {
   PostgresMessageContentRepository,
   PostgresWebhookEventDedupRepository,
 } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
-import { DeterministicCommunicationInterpreter, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
+import { DeterministicCommunicationInterpreter, retentionPurgeJob, retentionPurgeSchedule, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
+import { createPostgresClient as createJobsClient, JobQueue, JobRegistry } from '@samvardiq/platform-jobs';
 
 import { loadConfigFromEnv, runtimePoolConfig } from './config.js';
+import { startJobsHost, type JobsHost } from './jobsHost.js';
 import { assertRuntimeDatabaseConfigured, assertRuntimeRole } from './runtimeDbIdentity.js';
 import { buildServer } from './server.js';
 
@@ -126,15 +128,25 @@ async function main(): Promise<void> {
   // finish (fastify.close()'s own default behavior), then release the
   // database pools. No extra shutdown-orchestration library — one signal
   // handler covers both signals a container orchestrator sends.
+  // PLATFORM-JOBS-W1, hosting Option A: the worker and the schedule tick are
+  // independently enabled (both off unless explicitly "true"). The queue gets
+  // its own single-connection pool, created only when either is on (budget:
+  // 4 × DATABASE_POOL_MAX + 1); the retention purge itself runs on the existing
+  // communication pool, under each organization's RLS context.
+  const jobsClient = config.jobsWorkerEnabled || config.jobsSchedulerEnabled ? createJobsClient({ ...poolConfig, max: 1 }) : undefined;
+  let jobsHost: JobsHost | undefined;
+
   let shuttingDown = false;
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     app.log.info({ signal }, 'shutting down');
     try {
+      // No new tick, no new claim; give an in-flight job a moment, else its lease expires and it is reclaimed.
+      if (jobsHost) await Promise.race([jobsHost.stop(), new Promise((resolve) => setTimeout(resolve, 5_000))]);
       await app.close();
     } finally {
-      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close(), commsClient.close()]);
+      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close(), commsClient.close(), jobsClient?.close()]);
     }
     process.exit(0);
   }
@@ -142,6 +154,18 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
   await app.listen({ port: config.port, host: config.host });
+
+  if (jobsClient) {
+    const registry = new JobRegistry().register(retentionPurgeJob({ purge: messageContent }));
+    jobsHost = startJobsHost({
+      worker: config.jobsWorkerEnabled,
+      scheduler: config.jobsSchedulerEnabled,
+      queue: new JobQueue(jobsClient.db, registry),
+      registry,
+      schedules: [retentionPurgeSchedule({ organizations: channels })],
+      log: app.log,
+    });
+  }
 }
 
 main().catch((error) => {

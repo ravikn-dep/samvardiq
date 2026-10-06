@@ -28,11 +28,11 @@
     "@samvardiq/communication-orchestration": "file:../../packages/communication-orchestration",
     "@samvardiq/data-foundation": "file:../../packages/data-foundation",
     "@samvardiq/identity-access": "file:../../packages/identity-access",
+    "@samvardiq/platform-jobs": "file:../../packages/platform-jobs",
     "fastify": "^5.12.3"
   },
   "devDependencies": {
     "@samvardiq/platform-credentials": "file:../../packages/platform-credentials",
-    "@samvardiq/platform-jobs": "file:../../packages/platform-jobs",
     "@types/node": "^22.10.0",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.15.0",

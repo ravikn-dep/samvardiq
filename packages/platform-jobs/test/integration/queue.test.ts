@@ -388,6 +388,24 @@ describe('platform-jobs against real PostgreSQL', () => {
     assert.equal((await row(jobId)).lease_owner, 'w-thief');
   });
 
+  test('host shutdown reaches the running handler: run(signal) aborts the handler`s signal; the job is then failed/retried, never force-completed', async () => {
+    const { jobId } = await enqueue('shutdown');
+    let started!: () => void;
+    const running = new Promise<void>((r) => (started = r));
+    behavior = (j) =>
+      new Promise<void>((_resolve, reject) => {
+        started();
+        j.signal.addEventListener('abort', () => reject(new JobFailure('retryable', 'interrupted')), { once: true });
+      });
+    const stop = new AbortController();
+    const loop = new JobWorker(queue(), registry, { workerId: 'w-host', leaseMs: 30_000, random: () => 0.5 }).run(stop.signal, 50);
+    await running;
+    stop.abort();
+    await loop;
+    const r = await row(jobId);
+    assert.deepEqual([r.status, r.last_failure_class, r.lease_id], ['RETRY_WAIT', 'interrupted', null]);
+  });
+
   test('observability: stats expose counts, ages, stale leases and failure classes — never payloads or organizations', async () => {
     behavior = async () => {
       throw new JobFailure('permanent', 'invalid_reference');

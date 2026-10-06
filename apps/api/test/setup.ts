@@ -64,6 +64,8 @@ export function defaultTestConfig(overrides: Partial<ApiConfig> = {}): ApiConfig
     trustProxy: false,
     rateLimit: { max: 1000, windowMs: 60_000 },
     databasePoolMax: 3,
+    jobsWorkerEnabled: false,
+    jobsSchedulerEnabled: false,
     ...overrides,
   };
 }

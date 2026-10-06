@@ -41,7 +41,8 @@ export class JobWorker {
     this.leaseMs = options.leaseMs ?? 60_000;
   }
 
-  async runOnce(): Promise<RunOutcome> {
+  /** `stop`, when given (the host's shutdown signal), is also propagated to the running handler. */
+  async runOnce(stop?: AbortSignal): Promise<RunOutcome> {
     const job = await this.queue.claim(this.options.workerId, this.leaseMs);
     if (!job) return 'idle';
 
@@ -77,7 +78,8 @@ export class JobWorker {
       );
     }, Math.max(1_000, Math.floor(this.leaseMs / 3)));
     try {
-      await definition.handle({ jobId: job.jobId, jobType: job.jobType, organizationId: job.organizationId, payload, attempt: job.attempt, signal: controller.signal });
+      const signal = stop ? AbortSignal.any([controller.signal, stop]) : controller.signal;
+      await definition.handle({ jobId: job.jobId, jobType: job.jobType, organizationId: job.organizationId, payload, attempt: job.attempt, signal });
     } catch (error) {
       clearInterval(heartbeat);
       if (error instanceof JobFailure) return finish(error.kind, error.failureClass);
@@ -102,7 +104,7 @@ export class JobWorker {
     while (!signal.aborted) {
       let outcome: RunOutcome | 'store_error';
       try {
-        outcome = await this.runOnce();
+        outcome = await this.runOnce(signal);
       } catch {
         outcome = 'store_error';
         this.options.onEvent?.({ outcome });
