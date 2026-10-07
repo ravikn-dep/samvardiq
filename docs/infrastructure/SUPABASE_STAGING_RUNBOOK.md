@@ -743,3 +743,77 @@ The only persistent database change is migration `platform-credentials/0000`. Ev
 - DEAD replay and pruning.
 - Moving the worker and tick to a dedicated Railway service when the workload justifies it. That changes only the flags per service, not the queue semantics.
 - `MIGRATION-PROVENANCE-LINE-ENDINGS` (§28).
+
+## 30. IDENTITY-SUPABASE-AUTH-STAGING — human login, first OWNER, persistent-data-safe verifier (2026-10-07)
+
+**Status: active on staging.** A real human authenticates with Supabase Auth and reaches an OWNER-authorized `TrustedOrganizationContext` through Samvardiq's unchanged identity model (ADR-IDENTITY-001: Supabase proves identity; Samvardiq grants authority). Google is not connected. Production is not authorized and not deployed. **No schema or authority change:** the digest stays `6869f39e9014efaf`.
+
+**Supabase Auth configuration (Founder decision D1, applied in the dashboard):**
+- email and password only;
+- public signup **off**;
+- the email provider on;
+- no social providers. Google login is not enabled; later GBP OAuth is a separate integration.
+
+No site or redirect URLs are needed for password login. The API reads only `SUPABASE_PROJECT_URL`, already set in Railway, and verifies the project's public ES256 JWKS (issuer, signature, expiry). The browser uses only the publishable key. A test (`apps/web/test/auth/supabaseBoundary.test.ts`) pins the frontend to Supabase auth calls only, never the Data API, and to no secret or service-role key.
+
+**First-OWNER bootstrap (operator only, never an API route):** `apps/api/scripts/provisionHumanOwner.ts`, the human counterpart of ADR-IDENTITY-002's service-principal provisioning.
+- In one transaction it creates the organization, an active human identity, the `supabase` provider link (by the Auth user's UID, never an email) and an ACTIVE OWNER membership, with 3 `system` audit events.
+- It is dry-run by default and writes only with `--apply`. It refuses to re-link a subject, reuse an identity or attach an OWNER to an existing organization, and an exact re-run is a no-op.
+- Authentication never provisions authority. Further members join only through the OWNER-only membership API.
+
+**Persistent staging identity (legitimate data, must survive verification):**
+- organization `samvardiq-staging-clinic` ("Staging Test Clinic");
+- identity `founder-staging` ("Founder (staging)", human, active);
+- a `supabase` link to the Founder's Auth UID;
+- an ACTIVE OWNER membership;
+- 5 immutable audit events: 3 `system` bootstrap events, plus the Founder's live invite and revoke of the synthetic invitee, which refer to it by text only.
+
+**Activation sequence:**
+1. Live pre-audit: structure 14/14, digest `6869f39e9014efaf`, 0 rows, admin TLS 1.3 verified.
+2. Bootstrap dry run (`would-provision`), then `--apply` (`provisioned`).
+3. **Quoting defect, corrected:** the operator launcher ran the command through a Windows shell without quoting, so the two names were stored truncated ("Staging" / "Founder"). The launcher now quotes arguments; the bootstrap now prints the exact quoted names in dry-run and apply output; the two values were corrected by a guarded update (exact ids and the wrong values, one transaction). The bootstrap then reported `already-provisioned`.
+4. Synthetic proof rows seeded: `w1b-org-other` (no membership), `w1b-org-viewer` (the Founder as VIEWER), `w1b-invitee`.
+5. **Live human proof, 7/7, run by the Founder in their own terminal** (`proof.mjs`; hidden password prompt; the token is held in memory only; the session is signed out at the end):
+   - sign-in HTTP 200;
+   - `/v1/me/organizations` → `samvardiq-staging-clinic:OWNER`;
+   - OWNER-only invite 201 and revoke 200;
+   - another organization 403, identical to a non-existent one;
+   - VIEWER role 403;
+   - tampered, malformed and missing tokens 401/401/401;
+   - sign-out 204.
+
+   One earlier attempt failed sign-in with HTTP 400 (credential entry). Nothing was changed before the successful rerun, and it is not reproducible.
+6. **Synthetic cleanup by exact primary key**, each delete required to affect exactly one row: two memberships, `w1b-invitee`, and the two synthetic organizations. The Founder's invite and revoke audit rows are legitimate immutable history and were kept.
+7. **Persistent-data-safe verifier** (Founder decision D5; see below): 5 staging runs.
+   - Run 1, before the worker fix: B17 failed. The live worker had claimed the suite's job.
+   - Run 3, before the re-sweep fix: B15 failed. A late live-scheduler job remained.
+   - Runs 2, 4 and 5 passed 23/23.
+   - The Founder's rows hashed identically (`7cc00cea8207e88b`) before and after every run.
+   - Each run retains exactly 22 namespaced rows: immutable audit rows and the rows they reference.
+8. **Identity integrity, as `samvardiq_app` with the real `AuthorizationService`:** subject → `founder-staging` → ACTIVE OWNER → `TrustedOrganizationContext(samvardiq-staging-clinic)`, human, no approver role. A foreign organization is refused.
+9. **Deployments:** `main` fast-forwarded `176711a → eb96174 → 89bb1e3`. GitHub deployment records `6915991035` (`eb96174`) and `6916420318` (`89bb1e3`), `samvardiq-staging / staging`, `railway-app[bot]`, success.
+
+**Persistent-data-safe verifier (D5).** The behaviour suite no longer requires an empty database and never wipes it.
+- Every synthetic identifier carries a fresh per-run prefix `w1b-<8 hex>-` (`scripts/syntheticRun.ts`), compared exactly, never with LIKE.
+- **B0** takes a session advisory lock (no concurrent runs) and fingerprints every row outside the run.
+- **B13** proves those rows are byte-identical after the run.
+- **B15 never truncates.**
+  - It deletes only current-run rows, row by row, re-checking the prefix in every DELETE.
+  - Rows protected by an immutability trigger, and rows they reference, are kept, namespaced, reported and bounded (22 per run).
+  - Any other error rolls the whole cleanup back.
+  - Because the live scheduler can enqueue a job for the run's synthetic channel organization during cleanup, B15 waits one settle period and re-sweeps the run namespace in `platform_jobs`.
+- **B17** claims only its own per-run job type, so it can never claim and complete a real job.
+- Every tamper probe is scoped to the run's organization.
+- Cleanup refuses any namespace that is not exactly one run prefix.
+
+**Defects found by this live activation and fixed:**
+- `JobWorker` claimed any due job and killed unknown types. It now claims only the types in its own registry, so a job of an unknown type stays PENDING for a worker that knows it. This also makes rolling deploys safe.
+- `verifySupabaseStaging` and `migrateSupabaseStaging` exited 0 on failure: `embedded-postgres` installs `async-exit-hook`, which drops `process.exitCode`. Both now exit explicitly with the intended code. The PASS/FAIL output that earlier activations relied on was always correct.
+
+**Remaining risks, recorded and unchanged:**
+- **AF:** authorization does not reject an organization only because `organizations.status` is `inactive`. This needs a future explicit authorization/governance decision.
+- A deleted or signed-out Supabase user's already-issued access token stays cryptographically valid until it expires. The control is that Samvardiq's identity and membership status is re-checked on every request.
+- A retired Supabase signing key can still verify for up to about 10 minutes (jose JWKS cache); a newly published key is picked up within about 30 seconds.
+- Retained synthetic verifier rows grow by 22 per behaviour-suite run, all `w1b-<run>-` namespaced. Pruning them would require a governed procedure on immutable tables.
+
+Nothing in this section contains a password, token, publishable or secret key, or database credential.

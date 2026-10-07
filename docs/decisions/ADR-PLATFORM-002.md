@@ -140,6 +140,7 @@ Provider-neutral `packages/platform-jobs` (journal `drizzle_platform_jobs`). It 
 - Retryable → RETRY_WAIT after `30 s·2^(attempt−1)` ±20% jitter, capped at 1 h.
 - Permanent, or attempts exhausted → DEAD.
 - Any other error → retryable `unhandled_error`; its message is never stored or emitted.
+- A worker claims only the job types registered in its own registry (corrected 2026-10-07, runbook §30). A job of an unknown type stays PENDING, visible in stats, for a worker that knows it. This makes rolling deploys safe.
 - DEAD is terminal and retained. Nothing replays it automatically, and pruning and replay tooling are deferred.
 
 **Scheduling:** `runScheduleTick(queue, schedules, now)` uses code-defined fixed periods. The idempotency key `<schedule>:<periodStart>:<target>` makes duplicate, late and concurrent ticks collapse to one job. A missed period is not back-filled. What invokes the tick is a hosting detail; no Railway trigger is configured.

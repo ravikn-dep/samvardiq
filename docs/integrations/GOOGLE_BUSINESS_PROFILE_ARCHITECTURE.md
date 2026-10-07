@@ -40,7 +40,7 @@
 - Google OAuth proves access to Google resources only; Samvardiq remains the identity and authorization authority (ADR-IDENTITY-001).
 - A human **OWNER** connects a Google account (ADR-PLATFORM-001); accessible locations are listed; the OWNER **explicitly binds** a location to the organization. A location visible to a Google account never implies ownership. A provider location can be bound to at most one organization.
 - Sync runs as background jobs under the organization's context (ADR-PLATFORM-002).
-- **Prerequisite:** an authenticated Samvardiq OWNER requires Supabase Auth on staging (not yet configured).
+- **Prerequisite (met on staging, 2026-10-07):** an authenticated Samvardiq OWNER through Supabase Auth. The Founder is the staging OWNER of `samvardiq-staging-clinic` (staging runbook §30). GBP OAuth must begin from that already-authenticated, OWNER-authorized human; it never creates that authority.
 
 ## 4. Data contract (tenant tables, RLS + FORCE RLS)
 
