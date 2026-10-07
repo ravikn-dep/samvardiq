@@ -8,6 +8,10 @@ import { startLocalSupabaseCluster, type LocalSupabaseCluster } from '../../scri
 import { Reporter } from '../../scripts/stagingDb.js';
 import { provisionHumanOwner } from '../../scripts/provisionHumanOwner.js';
 import { acquireVerifierLock, cleanupRun, SYNTHETIC_PROBES } from '../../scripts/syntheticRun.js';
+import { createPostgresClient as createCommsClient, PostgresCommunicationChannelRepository, PostgresMessageContentRepository } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
+import { retentionPurgeJob, retentionPurgeSchedule } from '@samvardiq/communication-orchestration';
+import { createPostgresClient as createJobsClient, JobQueue, JobRegistry } from '@samvardiq/platform-jobs';
+import { startJobsHost } from '../../src/jobsHost.js';
 import { runStructureChecks } from '../../scripts/structureChecks.js';
 
 /**
@@ -197,6 +201,31 @@ test('D5: a second verifier run cannot start while one holds the verifier lock �
   } finally {
     await release();
   }
+});
+
+test('D5: the suite passes beside a LIVE worker and scheduler on the same database (the staging topology) — the live system never disturbs it and nothing of the run is left in platform_jobs', async () => {
+  const comms = createCommsClient({ connectionString: hardened.appUrl, max: 3 });
+  const jobs = createJobsClient({ connectionString: hardened.appUrl, max: 2 });
+  const registry = new JobRegistry().register(retentionPurgeJob({ purge: new PostgresMessageContentRepository(comms.db) }));
+  const quiet = { info: () => undefined, warn: () => undefined };
+  // Deliberately aggressive intervals: the live scheduler sees the suite's synthetic channel almost immediately.
+  // The organization snapshot is returned 1 s late, so a tick that enumerates the synthetic channel before cleanup
+  // commits enqueues AFTER it — exactly the staging race B15's re-sweep must absorb.
+  const channels = new PostgresCommunicationChannelRepository(comms.db);
+  const lateSource = { listOrganizationIdsWithChannels: async () => { const ids = await channels.listOrganizationIdsWithChannels(); await new Promise((r) => setTimeout(r, 1_000)); return ids; } };
+  const host = startJobsHost({ worker: true, scheduler: true, queue: new JobQueue(jobs.db, registry), registry, schedules: [retentionPurgeSchedule({ organizations: lateSource })], log: quiet, workerPollMs: 25, schedulerIntervalMs: 50, leaseMs: 30_000 });
+  try {
+    const reporter = new Reporter();
+    await runBehaviorSuite(hardened.owner, connectDirect(hardened.appUrl), reporter);
+    assertAllPassed(reporter);
+    assert.equal(reporter.results.length, 18);
+  } finally {
+    await host.stop();
+    await Promise.allSettled([comms.close(), jobs.close()]);
+  }
+  // After the live host has fully stopped (every in-flight tick finished): nothing of the run remains in platform_jobs.
+  const left = await hardened.owner.pool.query(`select count(*)::int as n from platform_jobs where left(coalesce(organization_id, idempotency_key), 4) = 'w1b-'`);
+  assert.equal(Number(left.rows[0].n), 0, 'no synthetic job left behind by the live scheduler');
 });
 
 test('a failed SET ROLE is counted (so the suite fails) instead of silently serving queries as the login role', async () => {

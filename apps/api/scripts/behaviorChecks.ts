@@ -35,7 +35,7 @@ import { ACTIVE_KEY_VERSION_ENV, MASTER_KEYS_ENV, MasterKeyRing, ProviderCredent
 import { JobQueue, JobRegistry, createPostgresClient as createJobs } from '@samvardiq/platform-jobs';
 
 import { EXPECTED_TABLES, EXPECTED_TRIGGERS, TENANT_TABLES } from './structureChecks.js';
-import { acquireVerifierLock, cleanupRun, countRunRows, fingerprint, newRunPrefix, SYNTHETIC_PROBES, type CleanupResult } from './syntheticRun.js';
+import { acquireVerifierLock, cleanupRun, CONCURRENTLY_WRITTEN, countRunRows, fingerprint, newRunPrefix, SYNTHETIC_PROBES, type CleanupResult } from './syntheticRun.js';
 import { Reporter, sanitizeError, type AdminPostgres } from './stagingDb.js';
 
 type Pool = AdminPostgres['pool'];
@@ -539,6 +539,17 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     await reporter.check('B15 cleanup: only this run`s rows are deleted (row by row, prefix re-checked); immutable audit rows and the rows they reference are kept and namespaced; everything outside the run is unchanged; governed triggers still enabled', async () => {
       try {
         cleanup = await cleanupRun(admin, EXPECTED_TABLES, P);
+        // The LIVE scheduler (staging runs it) may enumerate this run's synthetic channel organization and enqueue a
+        // retention job for it while cleanup runs. Such rows carry this run's namespace; let in-flight ticks settle and
+        // sweep them too (bounded). Only this run's namespace is ever touched.
+        // Always settle once (an in-flight tick may have enumerated the channel just before cleanup committed), then
+        // re-sweep while any appear, bounded.
+        for (const table of CONCURRENTLY_WRITTEN) {
+          for (let attempt = 0; attempt === 0 || (attempt < 5 && (await runRows(admin, table)) > 0); attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+            cleanup.deleted += (await cleanupRun(admin, [table], P)).deleted;
+          }
+        }
         assert.deepEqual(await fingerprint(admin, EXPECTED_TABLES, P), baseline, 'cleanup changed rows outside the run');
         const kept = { ...cleanup.immutable, ...cleanup.referenced };
         for (const table of Object.keys(kept)) assert.equal(await runRows(admin, table), (cleanup.immutable[table] ?? 0) + (cleanup.referenced[table] ?? 0), `${table}: retained count`);
