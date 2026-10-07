@@ -166,3 +166,56 @@ test('configuration: loadSupabaseConfigFromEnv succeeds with a valid URL', () =>
   const config = loadSupabaseConfigFromEnv({ SUPABASE_PROJECT_URL: 'https://real-project.supabase.co' });
   assert.equal(config.projectUrl, 'https://real-project.supabase.co');
 });
+
+// --- IDENTITY-SUPABASE-AUTH-STAGING additions -------------------------------------------------------------------------
+
+test('STAGING-F: a token that is not yet valid (nbf in the future) is denied', async () => {
+  const issuer = await createTestIssuer();
+  const adapter = new SupabaseIdentityProviderAdapter({ projectUrl: issuer.projectUrl, jwksOptions: issuer.jwksOptions });
+  const token = await issuer.signToken({ extraClaims: { nbf: Math.floor(Date.now() / 1000) + 3600 } });
+  await assert.rejects(adapter.verifyCredential({ rawToken: token }), InvalidCredentialError);
+});
+
+test('STAGING-R: a genuine token from ANOTHER Supabase project (its own issuer and keys) is denied', async () => {
+  const ours = await createTestIssuer();
+  const theirs = await createTestIssuer();
+  const adapter = new SupabaseIdentityProviderAdapter({ projectUrl: ours.projectUrl, jwksOptions: ours.jwksOptions });
+  await assert.rejects(adapter.verifyCredential({ rawToken: await theirs.signToken() }), InvalidCredentialError);
+  // Even re-labelled with our issuer, their signature does not match our JWKS.
+  await assert.rejects(adapter.verifyCredential({ rawToken: await theirs.signToken({ iss: `${ours.projectUrl}/auth/v1` }) }), InvalidCredentialError);
+});
+
+test('STAGING-V/W: role, app_metadata and user_metadata (incl. injected organization or OWNER) never reach the VerifiedPrincipal', async () => {
+  const issuer = await createTestIssuer();
+  const adapter = new SupabaseIdentityProviderAdapter({ projectUrl: issuer.projectUrl, jwksOptions: issuer.jwksOptions });
+  const token = await issuer.signToken({
+    sub: 'subject-v',
+    extraClaims: { role: 'service_role', app_metadata: { role: 'OWNER', organization_id: 'org-x' }, user_metadata: { organizationId: 'org-x', isAdmin: true }, organization_id: 'org-x' },
+  });
+  const principal = await adapter.verifyCredential({ rawToken: token });
+  assert.deepEqual(Object.keys(principal).sort(), ['provider', 'providerSubject', 'verifiedAt']);
+  assert.deepEqual([principal.provider, principal.providerSubject], ['supabase', 'subject-v']);
+});
+
+test('STAGING-AC: signing-key rotation — a token under a newly published key is accepted after the JWKS refreshes; a retired key is refused', async () => {
+  const { generateKeyPair, exportJWK, SignJWT, customFetch } = await import('jose');
+  const projectUrl = 'https://rotation-test.supabase.example';
+  const mk = async (kid: string) => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+    return { kid, privateKey, jwk: { ...(await exportJWK(publicKey)), kid, alg: 'ES256', use: 'sig' } };
+  };
+  const [oldKey, newKey] = await Promise.all([mk('old'), mk('new')]);
+  let published = [oldKey.jwk];
+  const adapter = new SupabaseIdentityProviderAdapter({
+    projectUrl,
+    jwksOptions: { cooldownDuration: 0, cacheMaxAge: 0, [customFetch]: async () => new Response(JSON.stringify({ keys: published }), { status: 200, headers: { 'content-type': 'application/json' } }) },
+  });
+  const sign = (k: typeof oldKey) =>
+    new SignJWT({ role: 'authenticated' }).setProtectedHeader({ alg: 'ES256', kid: k.kid }).setIssuer(`${projectUrl}/auth/v1`).setSubject('rot').setIssuedAt().setExpirationTime('1h').sign(k.privateKey);
+  assert.equal((await adapter.verifyCredential({ rawToken: await sign(oldKey) })).providerSubject, 'rot');
+  await assert.rejects(adapter.verifyCredential({ rawToken: await sign(newKey) }), InvalidCredentialError, 'unpublished key refused');
+  published = [oldKey.jwk, newKey.jwk]; // rotation: new key published alongside the old
+  assert.equal((await adapter.verifyCredential({ rawToken: await sign(newKey) })).providerSubject, 'rot');
+  published = [newKey.jwk]; // old key retired
+  await assert.rejects(adapter.verifyCredential({ rawToken: await sign(oldKey) }), InvalidCredentialError, 'retired key refused');
+});
