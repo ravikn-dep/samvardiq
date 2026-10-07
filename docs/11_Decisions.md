@@ -1784,7 +1784,7 @@ Durable Background Jobs and Scheduling
 
 ### Status
 
-Approved. Implemented and validated locally by PLATFORM-JOBS-W1 (`packages/platform-jobs`, 6 October 2026). The Founder clarified the background-work categories: (A) organization business/integration work runs under service-principal authority; (B) mandatory platform maintenance, currently only communication raw-message retention, runs as `system`, one organization per job under its RLS context. Retention is the first consumer. Not on staging. See `ADR-PLATFORM-002.md` → Implementation.
+Approved. Implemented and validated locally by PLATFORM-JOBS-W1 (`packages/platform-jobs`, 6 October 2026). The Founder clarified the background-work categories: (A) organization business/integration work runs under service-principal authority; (B) mandatory platform maintenance, currently only communication raw-message retention, runs as `system`, one organization per job under its RLS context. Retention is the first consumer. Hosting Option A: the worker and tick run in the API process behind separate flags. Active on staging since 7 October 2026 (migration `platform-jobs/0000`; runbook §29). See `ADR-PLATFORM-002.md` → Implementation.
 
 ### Category
 

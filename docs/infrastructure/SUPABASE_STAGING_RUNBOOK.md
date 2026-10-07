@@ -665,3 +665,81 @@ The only persistent database change is migration `platform-credentials/0000`. Ev
   - a governed reconciliation of existing staging journal hashes;
   - Windows/Linux reproducibility.
 - Already-applied migration history must never be rewritten without that procedure.
+
+## 29. PLATFORM-JOBS-W1 staging activation — durable job queue, retention maintenance, API-hosted worker/tick (2026-10-06/07)
+
+**Status: active on staging.**
+- The ARCH-021 queue (`docs/decisions/ADR-PLATFORM-002.md`) is migrated.
+- The worker and the schedule tick run inside the Railway staging `api` service (Founder hosting Option A) at `68faa2d`.
+- The hourly `communication.retention_purge` platform-maintenance job is proven end to end.
+- Google is not connected. Production is not authorized and not deployed.
+
+**Artifact applied:** `packages/platform-jobs/drizzle/0000_platform_jobs.sql`, the sixth migration step (journal `drizzle_platform_jobs`).
+- Working copy LF, SHA-256 `876addbbc18812b8ff33c9026c64a752b5ae04c6c78bc7c6e8c26170739d755c`, identical in `70e4ab6` and `68faa2d`.
+- All 15 tracked migration files had the same bytes before, during and after activation.
+- The fast-forward of `main` re-materialized this file as CRLF. The working copy was restored to the exact committed LF blob that staging had applied; git shows no content difference. This is a `MIGRATION-PROVENANCE-LINE-ENDINGS` symptom; see §28.
+
+**Hosting (Option A):**
+- **Flags:** `JOBS_WORKER_ENABLED` (this process claims and executes jobs) and `JOBS_SCHEDULER_ENABLED` (this process runs schedule ticks).
+  - They are independent, and both default to **off**.
+  - Only the exact values `true`/`false` are accepted; any other value refuses startup.
+- **Cadence:** the worker polls every 10 s with a 5-minute lease (renewed every 100 s). The tick runs at startup and every 5 min; retention periods are hourly.
+- **Connections:** the queue uses one extra connection, only when a flag is on (budget 4 × `DATABASE_POOL_MAX` + 1 = 13 of 15).
+- **Failures:** loop failures are logged as sanitized codes and retried; `/health` is unchanged (process health, not job health).
+- **Shutdown:** no new tick or claim. The running handler is signalled, and unfinished work is recovered by lease expiry.
+- **Multiple hosts:** proven safe.
+- **Railway staging variables added:** `JOBS_WORKER_ENABLED=true` and `JOBS_SCHEDULER_ENABLED=true`. Nothing else changed. No new secret is required.
+
+**Activation order used (schema first):**
+1. **Live pre-audit** with `main`'s own verifier at `f1c249e`, run from the same working copy via a temporary export of main's scripts (removed afterwards):
+   - structure 14/14, 20 tables, D1 identical;
+   - authority digest `e39f82df742a1a9a` (the reference);
+   - 0 rows;
+   - admin TLS 1.3, certificate verified.
+2. **`migrate:staging` logic from `68faa2d`:** exit 0. Only `platform-jobs/0000` was pending. Hardening was re-applied, enabling RLS on `platform_jobs` with the `samvardiq_app`-scoped platform-global policy.
+3. **Post-migration**, branch verifier structure 14/14:
+   - 21 tables, 6 journals, D1 437 catalog items identical;
+   - 5 platform-global tables, each with the same `{samvardiq_app} true` predicate.
+   - The authority diff is exactly the design, with nothing removed:
+     - `platform_jobs` INSERT and SELECT;
+     - 10 column-level UPDATE grants (lifecycle columns only, no DELETE);
+     - RLS (not forced) and one policy.
+   - **Constraints:** 8 CHECKs, the primary key, UNIQUE `(job_type, idempotency_key)`, the due-work index, no trigger.
+   - New digest: **`6869f39e9014efaf`**.
+4. **Old code + new schema:** `main`'s own behaviour suite passed 22/22. You confirmed Railway at `f1c249e`: Active, `/health` 200, `samvardiq_app`, no errors.
+5. **Queue and retention proof on staging** (synthetic `w1b-` data, as `samvardiq_app`):
+   - **Branch behaviour suite:** 23/23, including B17.
+   - **Extended proof:** 18/18.
+     - 8 concurrent sessions; 30 concurrent identical enqueues produced 1 job; 24 claimers produced 1 lease; 80 jobs across 8 loops were each claimed once.
+     - Lease, renew, expiry, reclaim and fencing; retry with backoff to DEAD; payload rules (app and database); immutable identity, no DELETE; claim rollback.
+     - Retention via the real schedule and job: exact boundary; an inactive organization, a disabled channel and missing or suspended service identities all still purge; metadata, handoff audit and channels are kept; cross-organization isolation; repeats are idempotent; failure leads to DEAD visible in stats, and the next period purges.
+     - No content in any job row, event or stats.
+   - Afterwards 0 rows and digest `6869f39e9014efaf`.
+6. **`main` fast-forwarded `f1c249e → 68faa2d`** and pushed. Railway's GitHub deployment record: deployment `6899958447`, `sha 68faa2d04d68099dc7af828df61c4ecd69c56c5c`, `samvardiq-staging / staging`, `railway-app[bot]`, in progress 2026-10-07 02:12:33Z, success 02:14:19Z, commit status "samvardiq-staging - api: success".
+7. **Fail-closed smoke with both flags absent:** you confirmed the deployment was Active, `/health` 200, `samvardiq_app`, and no `jobs worker/scheduler started` lines. The database showed 0 `platform_jobs` rows.
+8. **Flags enabled** (the two variables above). You confirmed `jobs worker started` and `jobs scheduler started` (`communication_retention`), `/health` 200 and no errors.
+9. **Real scheduled execution:** staging had no channel organizations, so the startup tick correctly created no job. A synthetic **target** (not a job) was seeded at 02:24:40Z: a disabled channel for `w1b-org-sched` with one expired and one future synthetic content row. The live scheduler created `communication.retention_purge` / `communication_retention:2026-10-07T02:00:00Z:w1b-org-sched` at 02:27:58Z with payload `{}`. The live worker claimed it at 02:28:05Z and it **SUCCEEDED** at 02:28:06Z on attempt 1. Only the expired row was purged; the messages, conversation and channel were kept.
+10. **Restart:** a controlled Railway replacement before 03:00Z. A new worker ID started and the scheduler resumed. The 02:00Z job still existed exactly once and unchanged: no duplicate, no re-execution.
+11. **Cleanup and final audit:**
+    - Only `w1b-` rows were deleted: 1 channel (first, so the live scheduler stops enumerating it), 1 content row, 2 messages, 1 conversation and 1 synthetic job.
+    - Genuine operational job rows: none exist, because staging has no real organizations. Future genuine retention job history is operational evidence and must be kept, not truncated.
+    - Final state: all 21 tables empty; no new job was created after the next hourly period started (no organizations to enumerate); branch verifier structure 14/14; digest **`6869f39e9014efaf`**, the new staging reference.
+
+**Verifier inventory now:**
+- 21 tables;
+- 5 platform-global tables (`platform_jobs` added);
+- 5 governed triggers and 5 own functions (unchanged);
+- 6 journals;
+- column-level UPDATE expectations for `platform_jobs`;
+- behaviour checks B0–B17.
+
+**Rollback posture:**
+- Setting either flag to `false` (or removing it) stops that loop on the next deployment. This is safe, and in-flight work is recovered by lease expiry.
+- Rolling the Railway deployment back to `f1c249e` is safe on the migrated schema.
+- Do not drop `platform-jobs/0000` while `platform_jobs` holds operational history.
+
+**Open follow-ups:**
+- An operational alert on any DEAD `communication.retention_purge` job, or when an organization has had no successful run in 24 h. Today it is visible only through `JobQueue.stats()`.
+- DEAD replay and pruning.
+- Moving the worker and tick to a dedicated Railway service when the workload justifies it. That changes only the flags per service, not the queue semantics.
+- `MIGRATION-PROVENANCE-LINE-ENDINGS` (§28).

@@ -1,6 +1,6 @@
 # Google Business Profile Integration — Architecture
 
-**Status:** PRODUCT DECISIONS D1–D8 APPROVED (Founder, 2026-10-05). **Implementation not started.** Platform prerequisites governed by `ADR-PLATFORM-001` (`ARCH-020`, credentials — implemented by PLATFORM-CREDENTIALS-W1, active on staging) and `ADR-PLATFORM-002` (`ARCH-021`, jobs — queue implemented by PLATFORM-JOBS-W1, not on staging).
+**Status:** PRODUCT DECISIONS D1–D8 APPROVED (Founder, 2026-10-05). **Implementation not started.** Platform prerequisites governed by `ADR-PLATFORM-001` (`ARCH-020`, credentials — implemented by PLATFORM-CREDENTIALS-W1, active on staging) and `ADR-PLATFORM-002` (`ARCH-021`, jobs — implemented by PLATFORM-JOBS-W1, active on staging).
 
 **Scope:** Samvardiq's first governed external business-intelligence source. GBP is a data source (and later an approved execution channel) feeding the CMO — not a standalone analytics product. Pilot: Dr. Deepthi Orthopaedic Clinic, Hyderabad.
 

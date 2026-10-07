@@ -4,7 +4,7 @@
 
 **Depends on:** `ADR-DATA-001` (`ARCH-015`), `ADR-IDENTITY-001` (`ARCH-016`), `ADR-IDENTITY-002` (`ARCH-019`, service principals), `ADR-PLATFORM-001` (`ARCH-020`, credentials never in payloads). Implements `docs/04_Architecture.md`'s "Job Queue" (priority, scheduled execution, retry, delay, concurrency control, dead-letter, cancellation, timeout, organization isolation), "Scheduling Engine", "Idempotency" and "Retry Logic" sections, which are canonical requirements with no implementation today.
 
-**Implementation status:** IMPLEMENTED AND VALIDATED LOCALLY by `PLATFORM-JOBS-W1` (`packages/platform-jobs`, migration `platform-jobs/0000_platform_jobs`, branch `platform-jobs-w1`). The queue primitive is complete, and the first consumer, communication retention as Category B platform maintenance, is wired and proven. Not on staging. Worker and tick hosting is not configured (Founder hosting choice pending). See "Implementation".
+**Implementation status:** IMPLEMENTED and **ACTIVE ON STAGING** (`PLATFORM-JOBS-W1`, `packages/platform-jobs`, migration `platform-jobs/0000_platform_jobs`; staging activation 2026-10-06/07, Railway on `68faa2d`; evidence in `docs/infrastructure/SUPABASE_STAGING_RUNBOOK.md` §29). The worker and schedule tick are hosted in the API process (Founder hosting Option A), behind `JOBS_WORKER_ENABLED` / `JOBS_SCHEDULER_ENABLED`, both enabled on staging only. The hourly retention purge is proven end to end. Production not authorized. See "Implementation".
 
 ---
 
@@ -181,4 +181,10 @@ It never returns payloads or organization IDs. The worker never logs; it emits s
 - **Evidence:** the SUCCEEDED or DEAD `platform_jobs` row records the operation type, target organization, period, attempts, outcome and time. Purged-row counts are not persisted. No content, message identifiers or contact data are recorded anywhere.
 - **Privacy:** `purgeExpired` now returns only message identifiers to count deletions. It previously loaded the deleted raw text back into memory.
 
-**Worker and tick hosting:** not configured. It needs a Founder choice before activation; see the PLATFORM-JOBS-W1 report.
+**Worker and tick hosting (Founder Option A, 2026-10-06):**
+- The API process is the current execution host (`apps/api/src/jobsHost.ts`). PostgreSQL remains the only source of truth.
+- `JOBS_WORKER_ENABLED` and `JOBS_SCHEDULER_ENABLED` are independent flags. Both default to off, and only the exact values `true`/`false` are accepted; anything else refuses startup.
+- The worker polls every 10 s with a 5-minute lease. The tick runs at startup and every 5 min.
+- The queue has its own single-connection pool, created only when a flag is on.
+- Several enabled hosts are safe: idempotent ticks, a unique enqueue key, SKIP LOCKED claims and fenced leases (proven with two hosts on one database).
+- Moving to a dedicated worker service later only changes the flags per service.
