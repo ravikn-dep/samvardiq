@@ -121,7 +121,7 @@ async function main(): Promise<void> {
   const admin = connectAdmin(url);
   try {
     const outcome = await provisionHumanOwner(admin, input, apply);
-    console.log(`${outcome}: organization=${input.organizationId} identity=${input.identityId} provider=${PROVIDER} role=OWNER status=ACTIVE${apply ? '' : ' (dry run — pass --apply to write)'}`);
+    console.log(`${outcome}: organization=${input.organizationId} name=${JSON.stringify(input.organizationName)} identity=${input.identityId} displayName=${JSON.stringify(input.displayName)} provider=${PROVIDER} role=OWNER status=ACTIVE${apply ? '' : ' (dry run — pass --apply to write)'}`);
   } finally {
     await admin.close();
   }

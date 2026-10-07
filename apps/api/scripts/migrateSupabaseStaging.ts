@@ -61,7 +61,12 @@ async function main(): Promise<void> {
   console.log('--- supabase platform hardening: done ---');
 }
 
-main().catch((error) => {
-  console.error('Unexpected failure:', JSON.stringify(sanitizeError(error)));
-  process.exitCode = 1;
-});
+// Explicit exit: embedded-postgres (imported transitively for the local reference cluster) installs async-exit-hook,
+// which ends the process WITHOUT the exit code, so a bare `process.exitCode = 1` would be reported as success.
+main().then(
+  () => process.exit(process.exitCode ?? 0),
+  (error) => {
+    console.error('Unexpected failure:', JSON.stringify(sanitizeError(error)));
+    process.exit(1);
+  },
+);

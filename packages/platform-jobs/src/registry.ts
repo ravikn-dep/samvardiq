@@ -81,6 +81,11 @@ export class JobRegistry {
     return this;
   }
 
+  /** The job types this registry can execute — a worker claims only these. */
+  types(): string[] {
+    return [...this.#definitions.keys()];
+  }
+
   get(type: string): JobDefinition {
     const definition = this.#definitions.get(type);
     if (!definition) throw new UnknownJobTypeError();

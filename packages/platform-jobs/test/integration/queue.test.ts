@@ -250,16 +250,16 @@ describe('platform-jobs against real PostgreSQL', () => {
     assert.deepEqual([r.status, r.attempts, r.last_failure_class, r.lease_id], ['DEAD', 3, 'lease_expired', null]);
   });
 
-  test('V/W: a stored job of an unknown type, with an invalid payload, or the wrong scope ends DEAD without running any handler', async () => {
+  test('V/W: a stored job of an unknown type is never claimed (left PENDING for a worker that knows it); invalid payload or wrong scope ends DEAD without running any handler', async () => {
     const insert = (type: string, org: string | null, payload: string, key: string) =>
       h.owner.pool.query(`insert into platform_jobs (job_id, job_type, organization_id, idempotency_key, payload, status, max_attempts) values (gen_random_uuid(), $1, $2, $3, $4::jsonb, 'PENDING', 3)`, [type, org, key, payload]);
     await insert('test.unregistered', ORG_A, '{}', 'u');
     await insert('test.org_job', ORG_A, '{"text":"hello patient"}', 'w');
     await insert('test.org_job', null, '{"period":"2026-10-06"}', 's');
     const outcomes = [await worker('w').runOnce(), await worker('w').runOnce(), await worker('w').runOnce()];
-    assert.deepEqual(outcomes, ['DEAD', 'DEAD', 'DEAD']);
-    const classes = (await h.owner.pool.query(`select idempotency_key, last_failure_class from platform_jobs order by 1`)).rows.map((r) => [r.idempotency_key, r.last_failure_class]);
-    assert.deepEqual(classes, [['s', 'invalid_scope'], ['u', 'unknown_job_type'], ['w', 'invalid_payload']]);
+    assert.deepEqual(outcomes, ['DEAD', 'DEAD', 'idle']);
+    const rows = (await h.owner.pool.query(`select idempotency_key, status, attempts, last_failure_class from platform_jobs order by 1`)).rows.map((r) => [r.idempotency_key, r.status, r.attempts, r.last_failure_class]);
+    assert.deepEqual(rows, [['s', 'DEAD', 1, 'invalid_scope'], ['u', 'PENDING', 0, null], ['w', 'DEAD', 1, 'invalid_payload']]);
     assert.equal(calls.length, 0);
   });
 

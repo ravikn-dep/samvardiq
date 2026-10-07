@@ -43,7 +43,9 @@ export class JobWorker {
 
   /** `stop`, when given (the host's shutdown signal), is also propagated to the running handler. */
   async runOnce(stop?: AbortSignal): Promise<RunOutcome> {
-    const job = await this.queue.claim(this.options.workerId, this.leaseMs);
+    // Claim only types this worker can execute: during a rolling deploy (or beside another host's verifier) a job of a
+    // type unknown here is left PENDING for a worker that knows it — never claimed and killed as unknown.
+    const job = await this.queue.claim(this.options.workerId, this.leaseMs, this.registry.types());
     if (!job) return 'idle';
 
     const finish = async (kind: 'retryable' | 'permanent', failureClass: string): Promise<RunOutcome> => {
