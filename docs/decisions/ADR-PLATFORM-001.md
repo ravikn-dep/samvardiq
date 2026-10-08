@@ -143,3 +143,22 @@ A composite foreign key (`organization_id, connection_id, provider`) keeps a cre
 **Rotation:** `CredentialKeyRotation.rewrapOrganization` re-wraps one credential per transaction, conditional on the version it read. The runtime role cannot enumerate organizations, so the operator supplies them. `keyVersionUsage` and `assertKeyVersionRetirable` refuse to run on any connection subject to RLS, so they can never certify a still-referenced key as retirable.
 
 **Verification:** 29 unit tests and 21 real-PostgreSQL tests (threat matrix A–AT). The staging verifier now expects 20 tables, 5 triggers, 5 own functions, column-level UPDATE grants, envelope columns only in `external_provider_credentials`, and behavior check B16 (the credential service as `samvardiq_app`).
+
+---
+
+## First consumer: GBP-W1 (2026-10-08, implemented, not activated)
+
+Founder decision G1 (`ARCH-022`) keeps this ADR unchanged: no human, OWNER included, can obtain plaintext. Google Business Profile discovery uses the access token from the OWNER's own OAuth completion, in memory, before it is stored. Additions to `packages/platform-credentials`, all provider-neutral:
+
+- **`ProviderOAuthAuthorizations`** (migration `0001_provider_oauth_authorizations`, table `provider_oauth_authorizations`):
+  - single-use OAuth state, human OWNER only, bound to organization, identity, provider and purpose;
+  - only `SHA-256(state)` is stored;
+  - consumed by `DELETE … RETURNING`;
+  - 10-minute expiry, capped at 15 minutes in the database;
+  - RLS + FORCE RLS; grants SELECT, INSERT, DELETE.
+- **PKCE verifier:** never stored. It is re-derived with HKDF from the master key version recorded at begin, with the domain label `samvardiq.oauth-pkce.v1`, the organization and the authorization ID. The key ring is used for derivation as well as wrapping, with domain separation, just as the key check value already uses it for an HMAC.
+- **`findOpenConnection(actor, provider)`**: OWNER-only, non-secret metadata of the organization's one open connection to a provider.
+- **`ProviderCredentialRejectedError`**: a provider connector throws it inside `useCredential` when the provider rejects the stored credential (e.g. OAuth `invalid_grant`). `useCredential` then moves the connection to NEEDS_REAUTH, the same guarded transition and audited `CONNECTION_NEEDS_REAUTH` event as a tampered envelope, and rethrows.
+- **Duplicate-connection policy for GBP:** at most one open Google Business Profile connection per organization (G3 pilot). It is enforced by a partial unique index that the `google-business-profile` migration places on `external_provider_connections`. Other providers keep the generic behaviour.
+
+Details: `docs/integrations/GOOGLE_BUSINESS_PROFILE_ARCHITECTURE.md` §9–§11.

@@ -23,6 +23,7 @@ const projects = [
   'packages/communication-orchestration',
   'packages/platform-credentials',
   'packages/platform-jobs',
+  'packages/google-business-profile',
   'apps/api',
 ];
 

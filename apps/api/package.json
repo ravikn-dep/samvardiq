@@ -6,7 +6,7 @@
   "description": "Minimal production HTTP server (IDENTITY-W5B): wires the framework-neutral request boundary from application-services into a real Fastify router (ARCH-017). No authentication/authorization/business logic lives here — transport plumbing only.",
   "main": "./dist/index.js",
   "scripts": {
-    "build:deps": "npm run build --prefix ../../packages/marketing-intelligence && npm run build --prefix ../../packages/approval-governance && npm run build --prefix ../../packages/data-foundation && npm run build --prefix ../../packages/identity-access && npm run build --prefix ../../packages/clinic-cms-connector && npm run build --prefix ../../packages/application-services && npm run build --prefix ../../packages/communication-orchestration && npm run build --prefix ../../packages/platform-credentials && npm run build --prefix ../../packages/platform-jobs",
+    "build:deps": "npm run build --prefix ../../packages/marketing-intelligence && npm run build --prefix ../../packages/approval-governance && npm run build --prefix ../../packages/data-foundation && npm run build --prefix ../../packages/identity-access && npm run build --prefix ../../packages/clinic-cms-connector && npm run build --prefix ../../packages/application-services && npm run build --prefix ../../packages/communication-orchestration && npm run build --prefix ../../packages/platform-credentials && npm run build --prefix ../../packages/platform-jobs && npm run build --prefix ../../packages/google-business-profile",
     "pretypecheck": "npm run build:deps",
     "typecheck": "tsc -p tsconfig.json",
     "prebuild": "npm run build:deps",
@@ -27,12 +27,13 @@
     "@samvardiq/clinic-cms-connector": "file:../../packages/clinic-cms-connector",
     "@samvardiq/communication-orchestration": "file:../../packages/communication-orchestration",
     "@samvardiq/data-foundation": "file:../../packages/data-foundation",
+    "@samvardiq/google-business-profile": "file:../../packages/google-business-profile",
     "@samvardiq/identity-access": "file:../../packages/identity-access",
+    "@samvardiq/platform-credentials": "file:../../packages/platform-credentials",
     "@samvardiq/platform-jobs": "file:../../packages/platform-jobs",
     "fastify": "^5.12.3"
   },
   "devDependencies": {
-    "@samvardiq/platform-credentials": "file:../../packages/platform-credentials",
     "@types/node": "^22.10.0",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.15.0",

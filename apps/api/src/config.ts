@@ -22,8 +22,10 @@ export interface ApiConfig {
   };
   /**
    * `max` for EACH of the four runtime pg pools (one per package). Budget per
-   * instance = 4 × this; keep instances × 4 × this within the database pooler's
-   * per-role pool size (staging Session Pooler: 15). Unset = 3, never pg's 10.
+   * instance = 4 × this, + 1 when either jobs flag is on, + 1 when GBP-W1 is
+   * configured (one shared credentials/GBP connection); keep instances × that
+   * within the database pooler's per-role pool size (staging Session Pooler: 15).
+   * Unset = 3, never pg's 10.
    */
   databasePoolMax: number;
   /**

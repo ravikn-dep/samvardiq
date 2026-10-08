@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ApiError, type Goal, type SamvardiqApiClient } from '../api/SamvardiqApiClient.js';
 import { useAuth } from '../auth/AuthContext.js';
@@ -79,6 +79,12 @@ export function DashboardPage({ apiClient }: { apiClient: SamvardiqApiClient }) 
       {error && <p role="alert">{error}</p>}
       {!error && goals === null && <p>Loading…</p>}
       {!error && goals !== null && <p>Dashboard foundation ready — {goals.length} goal(s) loaded for this organization.</p>}
+      {/* GBP-W1: UX only — the integration routes re-authorize OWNER server-side. */}
+      {orgInfo?.role === 'OWNER' && organizationId && (
+        <p>
+          <Link to={`/org/${encodeURIComponent(organizationId)}/integrations/google-business-profile`}>Google Business Profile</Link>
+        </p>
+      )}
     </div>
   );
 }

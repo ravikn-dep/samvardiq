@@ -26,6 +26,7 @@ export const SYNTHETIC_PROBES: Readonly<Record<string, string>> = {
   communication_message_content: 'organization_id', communication_channels: 'organization_id', identities: 'identity_id', identity_provider_links: 'identity_id',
   webhook_event_dedup: 'external_event_id', external_provider_connections: 'organization_id', external_provider_credentials: 'organization_id',
   external_provider_credential_events: 'organization_id', platform_jobs: 'coalesce(organization_id, idempotency_key)',
+  provider_oauth_authorizations: 'organization_id', gbp_location_candidates: 'organization_id', gbp_location_bindings: 'organization_id',
 };
 
 /**

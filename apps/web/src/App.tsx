@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from './auth/AuthContext.js';
 import { LoadingScreen } from './components/LoadingScreen.js';
 import { OrganizationProvider, useOrganization, type OrganizationState } from './organizations/OrganizationContext.js';
 import { DashboardPage } from './pages/DashboardPage.js';
+import { GoogleBusinessProfileCallbackPage } from './pages/GoogleBusinessProfileCallbackPage.js';
+import { GBP_CALLBACK_PATH, GoogleBusinessProfilePage } from './pages/GoogleBusinessProfilePage.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { NoAccessPage } from './pages/NoAccessPage.js';
 import { OrganizationSelectorPage } from './pages/OrganizationSelectorPage.js';
@@ -61,6 +63,8 @@ function AuthenticatedRoutes() {
     <Routes>
       <Route path="/organizations" element={<OrganizationSelectorPage />} />
       <Route path="/org/:organizationId" element={<DashboardPage apiClient={apiClient} />} />
+      <Route path="/org/:organizationId/integrations/google-business-profile" element={<GoogleBusinessProfilePage apiClient={apiClient} />} />
+      <Route path={GBP_CALLBACK_PATH} element={<GoogleBusinessProfileCallbackPage apiClient={apiClient} />} />
       <Route path="*" element={<RootRedirect state={state} />} />
     </Routes>
   );

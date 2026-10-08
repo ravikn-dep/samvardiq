@@ -7,11 +7,13 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 
 import { classifyClinicOperationsError, classifyError, type MembershipAdministrationDependencies } from '@samvardiq/application-services';
 import { classifyCommunicationError } from '@samvardiq/communication-orchestration';
+import { classifyGbpError } from '@samvardiq/google-business-profile';
 
 import type { ApiConfig } from './config.js';
 import { healthRoute } from './routes/health.js';
 import { clinicRoute, type ClinicRouteDependencies } from './routes/clinic.js';
 import { goalsRoute, type GoalsRouteDependencies } from './routes/goals.js';
+import { googleBusinessProfileRoute, type GoogleBusinessProfileRouteDependencies } from './routes/googleBusinessProfile.js';
 import { humanHandoffsRoute, type HumanHandoffsRouteDependencies } from './routes/humanHandoffs.js';
 import { meRoute } from './routes/me.js';
 import { membershipsRoute } from './routes/memberships.js';
@@ -21,7 +23,8 @@ export type AppDependencies = GoalsRouteDependencies &
   MembershipAdministrationDependencies &
   ClinicRouteDependencies &
   WhatsAppWebhookRouteDependencies &
-  HumanHandoffsRouteDependencies;
+  HumanHandoffsRouteDependencies &
+  GoogleBusinessProfileRouteDependencies;
 
 /**
  * Composition-root server builder (section 33/17). Takes already-constructed
@@ -149,6 +152,12 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
       reply.code(communicationClassified.httpStatus).send({ error: communicationClassified.message });
       return;
     }
+    // GBP-W1: Google Business Profile and ARCH-020 credential errors (fixed messages, no provider detail).
+    const gbpClassified = classifyGbpError(error);
+    if (gbpClassified) {
+      reply.code(gbpClassified.httpStatus).send({ error: gbpClassified.message });
+      return;
+    }
     // Full error only ever reaches the server-side log, never the client response.
     request.log.error({ err: error }, 'unhandled error');
     reply.code(500).send({ error: 'Internal server error.' });
@@ -161,6 +170,7 @@ export async function buildServer(deps: AppDependencies, config: ApiConfig, opti
   clinicRoute(app, deps);
   whatsappWebhookRoute(app, deps);
   humanHandoffsRoute(app, deps);
+  googleBusinessProfileRoute(app, deps);
 
   return app;
 }

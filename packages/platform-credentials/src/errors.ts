@@ -14,6 +14,8 @@ export type CredentialErrorCode =
   | 'key_unavailable'
   | 'key_ring_invalid'
   | 'key_version_in_use'
+  | 'authorization_invalid'
+  | 'credential_rejected'
   | 'store_failure';
 
 export abstract class CredentialError extends Error {
@@ -50,7 +52,7 @@ export class ConnectionConflictError extends CredentialError {
 
 export class InvalidCredentialInputError extends CredentialError {
   readonly code = 'invalid_input';
-  constructor(field: 'provider' | 'credentialType' | 'externalAccountId' | 'grantedScopes' | 'secret') {
+  constructor(field: 'provider' | 'credentialType' | 'externalAccountId' | 'grantedScopes' | 'secret' | 'purpose' | 'redirectUri') {
     super(`Invalid ${field}.`);
   }
 }
@@ -114,6 +116,28 @@ export async function sanitizeStoreErrors<T>(work: () => Promise<T>): Promise<T>
   } catch (error) {
     if (error instanceof CredentialError) throw error;
     throw new CredentialStoreError(sqlStateOf(error));
+  }
+}
+
+/** An OAuth state that is unknown, already used, expired, or bound to another organization, human, provider or purpose — deliberately one indistinguishable error. */
+export class OAuthAuthorizationInvalidError extends CredentialError {
+  readonly code = 'authorization_invalid';
+  constructor() {
+    super('The authorization request is invalid or has expired. Start again.');
+  }
+}
+
+/**
+ * Thrown BY a provider connector inside a `useCredential` callback when the
+ * provider itself rejects the stored credential (e.g. OAuth `invalid_grant`:
+ * revoked, expired or replaced at the provider). `useCredential` then moves
+ * the connection to NEEDS_REAUTH (audited) and rethrows. Carries nothing from
+ * the provider's response.
+ */
+export class ProviderCredentialRejectedError extends CredentialError {
+  readonly code = 'credential_rejected';
+  constructor() {
+    super('The provider rejected the stored credential. The connection must be re-authorized.');
   }
 }
 

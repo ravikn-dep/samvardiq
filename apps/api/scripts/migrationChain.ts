@@ -14,6 +14,7 @@ import { createPostgresClient as createClinicConnectorClient, runMigrations as m
 import { createPostgresClient as createCommsClient, runMigrations as migrateComms } from '@samvardiq/communication-orchestration/dist/postgres/client.js';
 import { createPostgresClient as createCredentialsClient, runMigrations as migrateCredentials } from '@samvardiq/platform-credentials/dist/postgres/client.js';
 import { createPostgresClient as createJobsClient, runMigrations as migrateJobs } from '@samvardiq/platform-jobs/dist/postgres/client.js';
+import { createPostgresClient as createGbpClient, runMigrations as migrateGbp } from '@samvardiq/google-business-profile/dist/postgres/client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +66,13 @@ export const MIGRATION_STEPS: MigrationStep[] = [
     migrationsFolder: path.resolve(__dirname, '../../../packages/platform-jobs/drizzle'),
     createClient: createJobsClient as MigrationStep['createClient'],
     runMigrations: migrateJobs as MigrationStep['runMigrations'],
+  },
+  // GBP-W1: references platform-credentials' external_provider_connections, so it must (and does) run after it.
+  {
+    packageName: 'google-business-profile',
+    migrationsFolder: path.resolve(__dirname, '../../../packages/google-business-profile/drizzle'),
+    createClient: createGbpClient as MigrationStep['createClient'],
+    runMigrations: migrateGbp as MigrationStep['runMigrations'],
   },
 ];
 

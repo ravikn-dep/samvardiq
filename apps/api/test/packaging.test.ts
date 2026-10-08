@@ -25,6 +25,7 @@ const projects = [
   'packages/communication-orchestration',
   'packages/platform-credentials',
   'packages/platform-jobs',
+  'packages/google-business-profile',
   'apps/api',
 ];
 const CA_REPO_PATH = 'certs/supabase-root-2021.crt';

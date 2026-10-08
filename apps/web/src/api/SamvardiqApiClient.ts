@@ -24,6 +24,21 @@ export interface Goal {
   status: string;
 }
 
+/** GBP-W1: the OWNER-visible Google Business Profile state — non-secret metadata only (no token, code or raw Google response ever reaches the browser). */
+export interface GbpCandidate {
+  locationName: string;
+  accountName: string;
+  accountDisplayName: string;
+  title: string;
+  addressSummary: string | null;
+}
+
+export interface GbpStatus {
+  connection: { connectionId: string; status: 'ACTIVE' | 'NEEDS_REAUTH' | 'DISCONNECTED'; googleAccountId: string | null; grantedScopes: string[]; connectedAt: string; updatedAt: string } | null;
+  binding: { locationName: string; accountName: string; title: string; boundByIdentityId: string; boundAt: string } | null;
+  candidates: GbpCandidate[];
+}
+
 /** Thrown for any non-2xx response. `message` is always the backend's own already-sanitized error text (never a raw exception, never SQL/token/internal-ID detail — see apps/api's classifyError). */
 export class ApiError extends Error {
   constructor(
@@ -51,7 +66,33 @@ export class SamvardiqApiClient {
     return this.request<Goal[]>('GET', `/v1/organizations/${encodeURIComponent(organizationId)}/goals`);
   }
 
-  private async request<T>(method: string, path: string): Promise<T> {
+  // ---- GBP-W1 (OWNER-only on the server; the server decides, never this client) ----
+  getGbpStatus(organizationId: string): Promise<GbpStatus> {
+    return this.request<GbpStatus>('GET', gbpPath(organizationId));
+  }
+
+  beginGbpAuthorization(organizationId: string, redirectUri: string): Promise<{ authorizationUrl: string; expiresAt: string }> {
+    return this.request('POST', `${gbpPath(organizationId)}/authorizations`, { redirectUri });
+  }
+
+  /** Forwards Google's redirect parameters, with this session, to the API (G4-A). Exactly one of code/error. */
+  completeGbpAuthorization(organizationId: string, input: { state: string; code: string } | { state: string; error: string }): Promise<GbpStatus> {
+    return this.request<GbpStatus>('POST', `${gbpPath(organizationId)}/authorizations/complete`, input);
+  }
+
+  bindGbpLocation(organizationId: string, locationName: string): Promise<GbpStatus> {
+    return this.request<GbpStatus>('POST', `${gbpPath(organizationId)}/binding`, { locationName });
+  }
+
+  unbindGbpLocation(organizationId: string): Promise<GbpStatus> {
+    return this.request<GbpStatus>('DELETE', `${gbpPath(organizationId)}/binding`);
+  }
+
+  disconnectGbp(organizationId: string): Promise<GbpStatus & { googleAuthorization: 'NOT_REVOKED' }> {
+    return this.request('POST', `${gbpPath(organizationId)}/disconnect`);
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const token = await this.getAccessToken();
     if (!token) throw new ApiError(401, 'Not signed in.');
 
@@ -59,7 +100,8 @@ export class SamvardiqApiClient {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}` },
+        headers: body === undefined ? { Authorization: `Bearer ${token}` } : { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
       // Network failure (offline, DNS, CORS preflight rejection, etc.) —
@@ -76,6 +118,8 @@ export class SamvardiqApiClient {
     return (await response.json()) as T;
   }
 }
+
+const gbpPath = (organizationId: string) => `/v1/organizations/${encodeURIComponent(organizationId)}/integrations/google-business-profile`;
 
 async function safeParseJson(response: Response): Promise<{ error?: unknown } | undefined> {
   try {

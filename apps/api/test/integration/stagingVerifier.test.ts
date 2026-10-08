@@ -59,7 +59,7 @@ test('behaviour suite passes end to end as samvardiq_app via direct login, and c
   const reporter = new Reporter();
   await runBehaviorSuite(hardened.owner, connectDirect(hardened.appUrl), reporter);
   assertAllPassed(reporter);
-  assert.equal(reporter.results.length, 18, 'B0-B17');
+  assert.equal(reporter.results.length, 19, 'B0-B18');
 });
 
 test('behaviour suite passes identically via the SET ROLE strategy used against staging, and is repeatable', async () => {
@@ -113,7 +113,7 @@ test('D5: legitimate persistent data (a bootstrapped human OWNER with audit hist
       const reporter = new Reporter();
       await runBehaviorSuite(hardened.owner, connectDirect(hardened.appUrl), reporter);
       assertAllPassed(reporter);
-      assert.equal(reporter.results.length, 18);
+      assert.equal(reporter.results.length, 19);
       assert.equal(await legitimateSnapshot(hardened), before, `run ${run}: legitimate rows unchanged`);
       counts.push(await syntheticRowCount(hardened));
     }
@@ -218,7 +218,7 @@ test('D5: the suite passes beside a LIVE worker and scheduler on the same databa
     const reporter = new Reporter();
     await runBehaviorSuite(hardened.owner, connectDirect(hardened.appUrl), reporter);
     assertAllPassed(reporter);
-    assert.equal(reporter.results.length, 18);
+    assert.equal(reporter.results.length, 19);
   } finally {
     await host.stop();
     await Promise.allSettled([comms.close(), jobs.close()]);

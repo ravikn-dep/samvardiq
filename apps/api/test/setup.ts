@@ -27,7 +27,7 @@ import {
   type CommunicationProvider,
 } from '@samvardiq/communication-orchestration';
 
-import { buildServer, type BuildServerOptions } from '../src/server.js';
+import { buildServer, type AppDependencies, type BuildServerOptions } from '../src/server.js';
 import type { ApiConfig } from '../src/config.js';
 import { createTestIssuer, type TestIssuer } from '../../../packages/identity-access/test/jwksTestHelper.js';
 
@@ -138,7 +138,8 @@ export function commsDeps(shared: {
   };
 }
 
-export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, options: BuildServerOptions = {}): Promise<TestWorld> {
+/** `extraDeps` adds optional dependencies (e.g. GBP-W1's `gbp` service) over the in-memory world. */
+export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, options: BuildServerOptions = {}, extraDeps: Partial<AppDependencies> = {}): Promise<TestWorld> {
   const identities = new InMemoryIdentityRepository();
   const providerLinks = new InMemoryIdentityProviderLinkRepository();
   const memberships = new InMemoryMembershipRepository(identities);
@@ -165,6 +166,7 @@ export async function buildWorld(configOverrides: Partial<ApiConfig> = {}, optio
       clinicConnectorAudit,
       clinicSecrets,
       ...commsDeps({ authz, organizations, clinicConnections, clinicConnectorAudit, channels, conversations }),
+      ...extraDeps,
     },
     defaultTestConfig(configOverrides),
     options,

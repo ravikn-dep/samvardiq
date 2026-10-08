@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import type { TrustedOrganizationContext } from '@samvardiq/identity-access';
 
 import { MAX_SECRET_BYTES, ENVELOPE_ALGORITHM, openCredential, sealCredential, type CredentialBinding } from './envelope.js';
@@ -11,6 +11,7 @@ import {
   CredentialInvalidError,
   CredentialUnavailableError,
   InvalidCredentialInputError,
+  ProviderCredentialRejectedError,
   sanitizeStoreErrors,
 } from './errors.js';
 import type { MasterKeyRing } from './keyRing.js';
@@ -275,9 +276,29 @@ export class ProviderCredentialService {
     }
     try {
       return await use(secret);
+    } catch (error) {
+      // The provider refused this exact credential: re-authorization is the only remedy (same guard as a tampered envelope).
+      if (error instanceof ProviderCredentialRejectedError) await this.#markNeedsReauth(actor, connectionId, row.credential.credentialId).catch(() => undefined);
+      throw error;
     } finally {
       secret.fill(0);
     }
+  }
+
+  /** OWNER: the organization's one open (not DISCONNECTED) connection to `provider`, or null. Non-secret metadata only. */
+  async findOpenConnection(actor: TrustedOrganizationContext, provider: string): Promise<ExternalProviderConnection | null> {
+    this.#assertAdministrator(actor);
+    assertIdentifier(provider, 'provider');
+    const organizationId = actor.organizationId;
+    return this.#tx(organizationId, async (tx) => {
+      const [open] = await tx
+        .select({ connectionId: connections.connectionId })
+        .from(connections)
+        .where(and(eq(connections.organizationId, organizationId), eq(connections.provider, provider), ne(connections.status, 'DISCONNECTED')))
+        .orderBy(desc(connections.connectedAt))
+        .limit(1);
+      return open ? this.#read(tx, organizationId, open.connectionId) : null;
+    });
   }
 
   /** Only if the failing credential is still the stored one — a re-authorization that replaced it meanwhile must not be undone. */

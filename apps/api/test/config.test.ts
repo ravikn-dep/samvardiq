@@ -77,8 +77,8 @@ test('runtimePoolConfig carries the budget and a finite acquisition timeout', ()
 test('the composition root gives every runtime pool the bounded config (no pool falls back to pg defaults)', () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
   const calls = [...source.matchAll(/\bcreate\w*Client\(([^)]*)\)/g)].map((m) => m[1]);
-  // Four package pools, plus the PLATFORM-JOBS-W1 queue pool (single connection, only when a jobs flag is on).
-  assert.deepEqual(calls, ['poolConfig', 'poolConfig', 'poolConfig', 'poolConfig', '{ ...poolConfig, max: 1 }']);
+  // Four package pools, plus the PLATFORM-JOBS-W1 queue pool and the GBP-W1 credential/GBP pool (each single-connection, only when enabled).
+  assert.deepEqual(calls, ['poolConfig', 'poolConfig', 'poolConfig', 'poolConfig', '{ ...poolConfig, max: 1 }', '{ ...poolConfig, max: 1 }']);
   assert.match(source, /const poolConfig = runtimePoolConfig\(config\);/);
   assert.doesNotMatch(source, /new Pool\(/);
 });

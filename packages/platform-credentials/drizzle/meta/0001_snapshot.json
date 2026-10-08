@@ -1,0 +1,548 @@
+{
+  "id": "2d401928-8259-4e9e-a9f9-5db1ba80008d",
+  "prevId": "e2364dbe-fd8a-4510-85f7-a93faee19d1a",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.external_provider_connections": {
+      "name": "external_provider_connections",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_account_id": {
+          "name": "external_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "granted_scopes": {
+          "name": "granted_scopes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connected_by_identity_id": {
+          "name": "connected_by_identity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connected_at": {
+          "name": "connected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "disconnected_at": {
+          "name": "disconnected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "external_provider_connections_organization_id_connection_id_pk": {
+          "name": "external_provider_connections_organization_id_connection_id_pk",
+          "columns": [
+            "organization_id",
+            "connection_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "external_provider_connections_provider_key": {
+          "name": "external_provider_connections_provider_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "connection_id",
+            "provider"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "external_provider_connections_status_check": {
+          "name": "external_provider_connections_status_check",
+          "value": "\"external_provider_connections\".\"status\" IN ('ACTIVE','NEEDS_REAUTH','DISCONNECTED')"
+        },
+        "external_provider_connections_disconnected_check": {
+          "name": "external_provider_connections_disconnected_check",
+          "value": "(\"external_provider_connections\".\"status\" = 'DISCONNECTED') = (\"external_provider_connections\".\"disconnected_at\" IS NOT NULL)"
+        },
+        "external_provider_connections_provider_check": {
+          "name": "external_provider_connections_provider_check",
+          "value": "\"external_provider_connections\".\"provider\" ~ '^[a-z][a-z0-9_]{1,62}$'"
+        },
+        "external_provider_connections_scopes_check": {
+          "name": "external_provider_connections_scopes_check",
+          "value": "jsonb_typeof(\"external_provider_connections\".\"granted_scopes\") = 'array'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.external_provider_credential_events": {
+      "name": "external_provider_credential_events",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_id": {
+          "name": "credential_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_principal_type": {
+          "name": "actor_principal_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_identity_id": {
+          "name": "actor_identity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "key_version": {
+          "name": "key_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "external_provider_credential_events_connection_idx": {
+          "name": "external_provider_credential_events_connection_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "external_provider_credential_events_connection_fkey": {
+          "name": "external_provider_credential_events_connection_fkey",
+          "tableFrom": "external_provider_credential_events",
+          "tableTo": "external_provider_connections",
+          "columnsFrom": [
+            "organization_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "connection_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "external_provider_credential_events_organization_id_event_id_pk": {
+          "name": "external_provider_credential_events_organization_id_event_id_pk",
+          "columns": [
+            "organization_id",
+            "event_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "external_provider_credential_events_type_check": {
+          "name": "external_provider_credential_events_type_check",
+          "value": "\"external_provider_credential_events\".\"event_type\" IN ('CONNECTION_CREATED','CREDENTIAL_STORED','CREDENTIAL_REPLACED','CREDENTIAL_REWRAPPED','CONNECTION_NEEDS_REAUTH','CONNECTION_DISCONNECTED','CREDENTIAL_DELETED')"
+        },
+        "external_provider_credential_events_actor_check": {
+          "name": "external_provider_credential_events_actor_check",
+          "value": "(\"external_provider_credential_events\".\"actor_principal_type\" IN ('human','service') AND \"external_provider_credential_events\".\"actor_identity_id\" IS NOT NULL)\n          OR (\"external_provider_credential_events\".\"actor_principal_type\" = 'system' AND \"external_provider_credential_events\".\"actor_identity_id\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.external_provider_credentials": {
+      "name": "external_provider_credentials",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_id": {
+          "name": "credential_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_type": {
+          "name": "credential_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "algorithm": {
+          "name": "algorithm",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ciphertext": {
+          "name": "ciphertext",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_nonce": {
+          "name": "payload_nonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_tag": {
+          "name": "payload_tag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wrapped_key": {
+          "name": "wrapped_key",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wrap_nonce": {
+          "name": "wrap_nonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wrap_tag": {
+          "name": "wrap_tag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key_version": {
+          "name": "key_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key_check": {
+          "name": "key_check",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "rotated_at": {
+          "name": "rotated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "external_provider_credentials_key_version_idx": {
+          "name": "external_provider_credentials_key_version_idx",
+          "columns": [
+            {
+              "expression": "key_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "external_provider_credentials_connection_fkey": {
+          "name": "external_provider_credentials_connection_fkey",
+          "tableFrom": "external_provider_credentials",
+          "tableTo": "external_provider_connections",
+          "columnsFrom": [
+            "organization_id",
+            "connection_id",
+            "provider"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "connection_id",
+            "provider"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "external_provider_credentials_organization_id_credential_id_pk": {
+          "name": "external_provider_credentials_organization_id_credential_id_pk",
+          "columns": [
+            "organization_id",
+            "credential_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "external_provider_credentials_connection_type_key": {
+          "name": "external_provider_credentials_connection_type_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "connection_id",
+            "credential_type"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "external_provider_credentials_type_check": {
+          "name": "external_provider_credentials_type_check",
+          "value": "\"external_provider_credentials\".\"credential_type\" ~ '^[a-z][a-z0-9_]{1,62}$'"
+        },
+        "external_provider_credentials_algorithm_check": {
+          "name": "external_provider_credentials_algorithm_check",
+          "value": "\"external_provider_credentials\".\"algorithm\" = 'AES-256-GCM'"
+        },
+        "external_provider_credentials_envelope_check": {
+          "name": "external_provider_credentials_envelope_check",
+          "value": "octet_length(\"external_provider_credentials\".\"ciphertext\") BETWEEN 1 AND 16384\n          AND octet_length(\"external_provider_credentials\".\"payload_nonce\") = 12 AND octet_length(\"external_provider_credentials\".\"payload_tag\") = 16\n          AND octet_length(\"external_provider_credentials\".\"wrapped_key\") = 32 AND octet_length(\"external_provider_credentials\".\"wrap_nonce\") = 12 AND octet_length(\"external_provider_credentials\".\"wrap_tag\") = 16\n          AND octet_length(\"external_provider_credentials\".\"key_check\") = 16 AND \"external_provider_credentials\".\"key_version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.provider_oauth_authorizations": {
+      "name": "provider_oauth_authorizations",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "authorization_id": {
+          "name": "authorization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state_hash": {
+          "name": "state_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "identity_id": {
+          "name": "identity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "redirect_uri": {
+          "name": "redirect_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key_version": {
+          "name": "key_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "provider_oauth_authorizations_organization_id_authorization_id_pk": {
+          "name": "provider_oauth_authorizations_organization_id_authorization_id_pk",
+          "columns": [
+            "organization_id",
+            "authorization_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "provider_oauth_authorizations_state_hash_key": {
+          "name": "provider_oauth_authorizations_state_hash_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "state_hash"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "provider_oauth_authorizations_state_hash_check": {
+          "name": "provider_oauth_authorizations_state_hash_check",
+          "value": "\"provider_oauth_authorizations\".\"state_hash\" ~ '^[0-9a-f]{64}$'"
+        },
+        "provider_oauth_authorizations_provider_check": {
+          "name": "provider_oauth_authorizations_provider_check",
+          "value": "\"provider_oauth_authorizations\".\"provider\" ~ '^[a-z][a-z0-9_]{1,62}$'"
+        },
+        "provider_oauth_authorizations_purpose_check": {
+          "name": "provider_oauth_authorizations_purpose_check",
+          "value": "\"provider_oauth_authorizations\".\"purpose\" IN ('connect')"
+        },
+        "provider_oauth_authorizations_redirect_check": {
+          "name": "provider_oauth_authorizations_redirect_check",
+          "value": "char_length(\"provider_oauth_authorizations\".\"redirect_uri\") <= 2048 AND \"provider_oauth_authorizations\".\"redirect_uri\" ~ '^https?://'"
+        },
+        "provider_oauth_authorizations_key_version_check": {
+          "name": "provider_oauth_authorizations_key_version_check",
+          "value": "\"provider_oauth_authorizations\".\"key_version\" > 0"
+        },
+        "provider_oauth_authorizations_lifetime_check": {
+          "name": "provider_oauth_authorizations_lifetime_check",
+          "value": "\"provider_oauth_authorizations\".\"expires_at\" > \"provider_oauth_authorizations\".\"created_at\" AND \"provider_oauth_authorizations\".\"expires_at\" <= \"provider_oauth_authorizations\".\"created_at\" + interval '15 minutes'"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

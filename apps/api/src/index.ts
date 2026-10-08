@@ -29,6 +29,8 @@ import {
 } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
 import { DeterministicCommunicationInterpreter, retentionPurgeJob, retentionPurgeSchedule, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
 import { createPostgresClient as createJobsClient, JobQueue, JobRegistry } from '@samvardiq/platform-jobs';
+import { createPostgresClient as createCredentialsClient, MasterKeyRing, ProviderCredentialService, ProviderOAuthAuthorizations } from '@samvardiq/platform-credentials';
+import { GbpConnectionService, gbpDatabase, GbpReadClient, GoogleOAuthClient, loadGbpConfigFromEnv } from '@samvardiq/google-business-profile';
 
 import { loadConfigFromEnv, runtimePoolConfig } from './config.js';
 import { startJobsHost, type JobsHost } from './jobsHost.js';
@@ -98,6 +100,27 @@ async function main(): Promise<void> {
   const platformAppSecretReference = 'env:META_WHATSAPP_APP_SECRET';
   const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN ?? '';
 
+  // GBP-W1: off unless all three GBP_OAUTH_* variables are set (routes then answer 503). When on, the ARCH-020
+  // master key ring is mandatory — a missing or malformed key ring refuses startup rather than half-enabling OAuth.
+  // One single-connection pool serves the credential store and the GBP tables (runtime budget 4 × DATABASE_POOL_MAX + 1 + 1).
+  const gbpConfig = loadGbpConfigFromEnv();
+  const credentialsClient = gbpConfig ? createCredentialsClient({ ...poolConfig, max: 1 }) : undefined;
+  const gbp =
+    gbpConfig && credentialsClient
+      ? (() => {
+          const keyRing = MasterKeyRing.fromEnv();
+          return new GbpConnectionService({
+            db: gbpDatabase(credentialsClient.pool),
+            credentials: new ProviderCredentialService(credentialsClient.db, keyRing),
+            authorizations: new ProviderOAuthAuthorizations(credentialsClient.db, keyRing),
+            oauth: new GoogleOAuthClient({ clientId: gbpConfig.clientId, clientSecret: gbpConfig.clientSecret }),
+            gbp: new GbpReadClient(),
+            redirectUris: gbpConfig.redirectUris,
+          });
+        })()
+      : null;
+  console.log(`Google Business Profile integration: ${gbp ? 'configured' : 'not configured'}`);
+
   const app = await buildServer(
     {
       identityProvider,
@@ -120,6 +143,7 @@ async function main(): Promise<void> {
       provider: new WhatsAppCloudProvider(),
       accessTokenSecrets,
       metaWebhookVerifyToken,
+      gbp,
     },
     config,
   );
@@ -146,7 +170,7 @@ async function main(): Promise<void> {
       if (jobsHost) await Promise.race([jobsHost.stop(), new Promise((resolve) => setTimeout(resolve, 5_000))]);
       await app.close();
     } finally {
-      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close(), commsClient.close(), jobsClient?.close()]);
+      await Promise.allSettled([identityClient.close(), dataFoundationClient.close(), clinicConnectorClient.close(), commsClient.close(), jobsClient?.close(), credentialsClient?.close()]);
     }
     process.exit(0);
   }

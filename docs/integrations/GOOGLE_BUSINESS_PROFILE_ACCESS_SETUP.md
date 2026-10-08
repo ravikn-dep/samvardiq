@@ -26,11 +26,24 @@
 
 Enable the Business Profile APIs listed on Google's Basic setup page (it currently lists Google My Business API, My Business Account Management API, My Business Business Information API, My Business Notifications API, My Business Verifications API, My Business Lodging API and My Business Place Actions API), plus the **Business Profile Performance API** (metrics and search keywords). Samvardiq W1 only reads accounts, locations, performance, keywords and reviews.
 
-## 5. Configure OAuth (later, when GBP-W1 is ready)
+## 5. Configure OAuth (GBP-W1 is implemented; do this after approval)
 
-- OAuth consent screen: Samvardiq app name, support email, privacy policy URL, and the single scope `https://www.googleapis.com/auth/business.manage`. Google offers no read-only scope; Samvardiq enforces read-only itself.
-- Create an OAuth **web application** client. Its redirect URI will be the Samvardiq API callback URL provided at GBP-W1.
-- Google may require **OAuth app verification** for this scope before other organizations can connect; until then the app can be used by listed test users. (Verify on the consent-screen page when you configure it.)
+Re-checked against Google's documentation on 2026-10-08.
+
+**Consent screen:**
+- Samvardiq app name, support email, privacy policy URL.
+- The single scope `https://www.googleapis.com/auth/business.manage`. Google offers no read-only scope; Samvardiq enforces read-only itself (architecture §9).
+- No `openid`/email/profile scope is needed: Google is not a Samvardiq login.
+
+**Publishing status "Testing":**
+- Add the Google account that manages the clinic's profile as a **test user**.
+- Google expires refresh tokens issued to "Testing" apps with external users **after 7 days**, so a staging connection then shows "Needs reconnection" and the OWNER reconnects. Production use needs Google's OAuth app verification for this scope (decided at production readiness, not now).
+
+**OAuth client:**
+- Create a **Web application** client.
+- **Authorized redirect URIs** must match exactly, character for character. For the staging proof, register the loopback URI `http://127.0.0.1:53682/callback`; Google allows plain http only for loopback.
+- When the web app is deployed, also register `https://<web app host>/integrations/google-business-profile/callback`.
+- No JavaScript origin is needed: the browser never calls Google with the client.
 
 ## 6. What never goes into chat, documents or Git
 
@@ -43,3 +56,19 @@ The client secret will be placed directly into the hosting secret store when GBP
 ## 7. What to tell Claude/ChatGPT when ready
 
 "GBP API access approved" plus the non-secret facts: project number, quota now 300 QPM, APIs enabled. GBP-W1 then verifies access with the live API without you pasting any secret.
+
+## 8. GBP-W1 staging activation checklist (each item confirmed before any live OAuth)
+
+1. **Google Cloud project:** owned by the Founder's Samvardiq Google account; project number noted.
+2. **Business Profile API access approved:** the quota shows 300 QPM, not 0.
+3. **APIs enabled:** the §4 list. W1 calls only the Account Management API (`accounts.list`) and the Business Information API (`accounts.locations.list`).
+4. **Consent screen:** configured per §5, with the clinic's managing Google account as a test user.
+5. **Web OAuth client:** created, with `http://127.0.0.1:53682/callback` registered exactly.
+6. **Railway variables**, entered by the Founder directly in Railway, never in chat:
+   - `GBP_OAUTH_CLIENT_ID`: the client ID (non-secret);
+   - `GBP_OAUTH_REDIRECT_URIS`: `http://127.0.0.1:53682/callback`;
+   - `GBP_OAUTH_CLIENT_SECRET`: the client secret;
+   - `PROVIDER_CREDENTIAL_MASTER_KEYS` and `PROVIDER_CREDENTIAL_ACTIVE_KEY_VERSION`: generated and backed up per `docs/infrastructure/PROVIDER_CREDENTIAL_KEYS_RUNBOOK.md`.
+
+   Set all of them together. With any one missing, the API refuses to start, which is deliberate: it fails closed rather than half-enabling OAuth.
+7. **Staging migrations** `platform-credentials/0001` and `google-business-profile/0000` applied through the canonical chain, before the deployment that uses them (schema first; runbook §31).

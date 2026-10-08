@@ -89,6 +89,40 @@ export const externalProviderCredentials = pgTable(
   ],
 );
 
+/**
+ * GBP-W1 (Founder decision G2): one row per in-flight OAuth authorization —
+ * provider-neutral, single-use, short-lived, bound to the initiating human and
+ * organization. Holds no secret: the state is stored only as its SHA-256, and
+ * the PKCE verifier is never stored at all (it is re-derived from the master
+ * key ring and this row's identifiers, see oauthAuthorizations.ts). Consuming
+ * an authorization DELETEs its row, so a replay finds nothing.
+ */
+export const providerOAuthAuthorizations = pgTable(
+  'provider_oauth_authorizations',
+  {
+    organizationId: text('organization_id').notNull(),
+    authorizationId: text('authorization_id').notNull(),
+    stateHash: text('state_hash').notNull(),
+    provider: text('provider').notNull(),
+    purpose: text('purpose').notNull(),
+    identityId: text('identity_id').notNull(),
+    redirectUri: text('redirect_uri').notNull(),
+    keyVersion: integer('key_version').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.authorizationId] }),
+    unique('provider_oauth_authorizations_state_hash_key').on(table.stateHash),
+    check('provider_oauth_authorizations_state_hash_check', sql`${table.stateHash} ~ '^[0-9a-f]{64}$'`),
+    check('provider_oauth_authorizations_provider_check', sql`${table.provider} ~ ${sql.raw(IDENTIFIER)}`),
+    check('provider_oauth_authorizations_purpose_check', sql`${table.purpose} IN ('connect')`),
+    check('provider_oauth_authorizations_redirect_check', sql`char_length(${table.redirectUri}) <= 2048 AND ${table.redirectUri} ~ '^https?://'`),
+    check('provider_oauth_authorizations_key_version_check', sql`${table.keyVersion} > 0`),
+    check('provider_oauth_authorizations_lifetime_check', sql`${table.expiresAt} > ${table.createdAt} AND ${table.expiresAt} <= ${table.createdAt} + interval '15 minutes'`),
+  ],
+);
+
 export const externalProviderCredentialEvents = pgTable(
   'external_provider_credential_events',
   {

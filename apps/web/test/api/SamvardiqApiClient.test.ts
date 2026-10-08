@@ -62,4 +62,15 @@ describe('SamvardiqApiClient', () => {
     await client.listGoals('org with spaces');
     expect(fetchMock).toHaveBeenCalledWith('https://api.example/v1/organizations/org%20with%20spaces/goals', expect.anything());
   });
+
+  it('GBP-W1: completion forwards only state + code as JSON with the bearer token, to the organization-scoped route', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ connection: null, binding: null, candidates: [] }), { status: 200 }));
+    const client = new SamvardiqApiClient('https://api.example', async () => 'token');
+    await client.completeGbpAuthorization('org A', { state: 's', code: 'c' });
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example/v1/organizations/org%20A/integrations/google-business-profile/authorizations/complete', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: 's', code: 'c' }),
+    });
+  });
 });

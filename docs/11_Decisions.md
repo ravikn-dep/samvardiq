@@ -1698,7 +1698,7 @@ External Provider Credential Protection
 
 ### Status
 
-Approved. Implemented by PLATFORM-CREDENTIALS-W1 (`packages/platform-credentials`) and active on staging since 6 October 2026 (migration `platform-credentials/0000`; runbook §28). See `ADR-PLATFORM-001.md` → Implementation.
+Approved. Implemented by PLATFORM-CREDENTIALS-W1 (`packages/platform-credentials`) and active on staging since 6 October 2026 (migration `platform-credentials/0000`; runbook §28). See `ADR-PLATFORM-001.md` → Implementation. First consumer: GBP-W1 (`ARCH-022`, implemented 8 October 2026, not yet activated).
 
 ### Category
 
@@ -1848,6 +1848,84 @@ durable and transactional without new infrastructure.
 
 When job volume or latency requirements exceed what a PostgreSQL queue
 serves comfortably, or at production readiness review.
+
+### Owner
+
+Founder Office
+
+---
+
+## ARCH-022
+
+### Title
+
+Google Business Profile Connection: Authority, OAuth State and Location Binding (GBP-W1 decisions G1–G4)
+
+### Date
+
+8 October 2026
+
+### Status
+
+Approved by the Founder (G1–G4). Implemented by GBP-W1 (`packages/google-business-profile`, `platform-credentials` migration `0001`); validated locally; **not activated on staging** while Google API access is pending. Details: `docs/integrations/GOOGLE_BUSINESS_PROFILE_ARCHITECTURE.md` §9–§11.
+
+### Category
+
+Architecture
+
+### Decision
+
+- **G1: no amendment to ARCH-020.**
+  - Using a stored credential remains service-principal-only.
+  - Google accounts and locations are discovered only inside the OWNER's authenticated OAuth completion, using the access token just received, held in memory. Only non-secret references are kept.
+  - In W1, refreshing the candidate list means reconnecting.
+  - Disconnect is local. Samvardiq never claims to have revoked access at Google.
+- **G2: approved schema.**
+  - Provider-neutral, single-use OAuth state: SHA-256 of the state, bound to organization, human, provider and purpose, short-lived. The PKCE verifier is protected; it is re-derived from the master key ring and never stored.
+  - GBP location candidates and binding history.
+  - All with RLS + FORCE RLS, narrow grants and database-enforced uniqueness.
+- **G3 (W1 pilot restriction, not permanent architecture).**
+  - One open Google connection and one bound location per organization.
+  - A location is actively bound to at most one organization.
+  - The same Google account may re-authorize; a different one requires a controlled disconnect first.
+  - Disconnect ends the binding and keeps its history.
+  - Multi-location expansion later drops one or two indexes. Identity, credential ownership and tenant isolation are not redesigned.
+- **G4: authenticated completion.**
+  - Google returns to the Samvardiq web app (or an operator's loopback for the staging proof).
+  - That page forwards `state` and `code` to the API with the OWNER's session.
+  - The API completes only for the same human OWNER and organization that began the flow. OAuth state never confers authority.
+  - An API-hosted callback with a web-session handoff was evaluated; adopting it would need Founder approval.
+
+### Reasoning
+
+- **Least authority.** OWNER-initiated discovery needs no new plaintext capability, and stored credentials remain usable only by service principals.
+- **Server-authoritative, single-use state** defeats replay, cross-organization confusion and login CSRF.
+- **Pilot simplicity.** One connection and one location per organization suits the pilot clinic, and lifting those limits needs no redesign.
+
+### Alternatives Considered
+
+- **G1-B:** amend ARCH-020 to give OWNERs a narrow server-side discover/verify/revoke capability. Not chosen for W1.
+- **Stateless signed state.** Rejected: not single-use and not server-authoritative.
+- **Multiple locations or Google accounts per organization in W1.** Deferred.
+- **G4-B:** an API callback trusting the state alone. Rejected: no session binding at completion.
+
+### Expected Benefits
+
+- An OWNER can connect a Google Business Profile without Samvardiq ever exposing a token to a browser, log or human.
+- A foundation for read-only ingestion (GBP-W2) through the existing service-principal boundary.
+
+### Potential Risks
+
+- **Google-side access remains after disconnect** until the user removes it. Mitigated: Samvardiq's copy is deleted, and the UI says so.
+- **Refresh tokens expire every 7 days** while the Google app is in "Testing". Mitigated: the connection shows NEEDS_REAUTH and the OWNER reconnects.
+
+### Impact
+
+- Three tables (24 total), two migrations, verifier check B18, OWNER-only API routes, and minimal web connection and callback pages.
+
+### Review Date
+
+At GBP-W2 (ingestion), at the first multi-location organization, or at production readiness review.
 
 ### Owner
 

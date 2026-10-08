@@ -16,8 +16,9 @@ import { Reporter, type AdminPostgres } from './stagingDb.js';
 export const EXPECTED_TABLES = [
   'approval_records', 'approval_requests', 'clinic_cms_connections', 'clinic_cms_connector_evidence', 'communication_channels',
   'communication_message_content', 'communication_messages', 'conversation_handoffs', 'conversations', 'external_provider_connections',
-  'external_provider_credential_events', 'external_provider_credentials', 'goals', 'identities', 'identity_audit_events',
-  'identity_provider_links', 'organization_memberships', 'organizations', 'platform_jobs', 'recommendations', 'webhook_event_dedup',
+  'external_provider_credential_events', 'external_provider_credentials', 'gbp_location_bindings', 'gbp_location_candidates', 'goals', 'identities',
+  'identity_audit_events', 'identity_provider_links', 'organization_memberships', 'organizations', 'platform_jobs', 'provider_oauth_authorizations',
+  'recommendations', 'webhook_event_dedup',
 ] as const;
 
 /** Tenant-scoped tables: FORCE RLS + at least one policy keyed on the organization (or, for memberships, identity) GUC. */
@@ -38,6 +39,9 @@ export const EXPECTED_APP_PRIVILEGES: Record<string, string> = {
   external_provider_connections: 'INSERT,SELECT',
   external_provider_credential_events: 'INSERT,SELECT',
   external_provider_credentials: 'DELETE,INSERT,SELECT',
+  // GBP-W1: binding history is never deleted, only ended (column-level UPDATE); candidates are replaced wholesale (no UPDATE).
+  gbp_location_bindings: 'INSERT,SELECT',
+  gbp_location_candidates: 'DELETE,INSERT,SELECT',
   goals: 'DELETE,INSERT,SELECT,UPDATE',
   identities: 'INSERT,SELECT,UPDATE',
   identity_audit_events: 'INSERT,SELECT',
@@ -46,6 +50,8 @@ export const EXPECTED_APP_PRIVILEGES: Record<string, string> = {
   organizations: 'DELETE,INSERT,SELECT,UPDATE',
   // PLATFORM-JOBS-W1: lifecycle UPDATE is column-level only (EXPECTED_APP_COLUMN_UPDATES); no DELETE.
   platform_jobs: 'INSERT,SELECT',
+  // GBP-W1: single-use OAuth state — consumed by DELETE ... RETURNING, so no UPDATE at all.
+  provider_oauth_authorizations: 'DELETE,INSERT,SELECT',
   recommendations: 'DELETE,INSERT,SELECT,UPDATE',
   webhook_event_dedup: 'INSERT,SELECT',
 };
@@ -55,14 +61,16 @@ export const EXPECTED_JOURNALS: Record<string, { schema: string; migrations: num
   'identity-access': { schema: 'drizzle_identity_access', migrations: 5 },
   'clinic-cms-connector': { schema: 'drizzle_clinic_cms_connector', migrations: 3 },
   'communication-orchestration': { schema: 'drizzle_communication_orchestration', migrations: 3 },
-  'platform-credentials': { schema: 'drizzle_platform_credentials', migrations: 1 },
+  'platform-credentials': { schema: 'drizzle_platform_credentials', migrations: 2 },
   'platform-jobs': { schema: 'drizzle_platform_jobs', migrations: 1 },
+  'google-business-profile': { schema: 'drizzle_google_business_profile', migrations: 1 },
 };
 
 /** Column-level UPDATE grants (PLATFORM-CREDENTIALS-W1): lifecycle/wrap columns only — never a ciphertext or an identity column. */
 export const EXPECTED_APP_COLUMN_UPDATES: Record<string, string> = {
   external_provider_connections: 'disconnected_at,external_account_id,granted_scopes,status,updated_at',
   external_provider_credentials: 'key_check,key_version,rotated_at,wrap_nonce,wrap_tag,wrapped_key',
+  gbp_location_bindings: 'unbind_reason,unbound_at,unbound_by_identity_id',
   platform_jobs: 'attempts,finished_at,last_failure_class,lease_expires_at,lease_id,lease_owner,run_after,started_at,status,updated_at',
 };
 

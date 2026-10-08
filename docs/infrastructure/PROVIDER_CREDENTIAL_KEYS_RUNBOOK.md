@@ -20,6 +20,10 @@ The other listed versions only decrypt. The application **fails closed** if eith
 
 **When it is needed:** only a process that constructs the credential service. As of PLATFORM-CREDENTIALS-W1 no API route or worker does, so **staging/production need no key yet**. Provision it when the first consumer (GBP-W1) ships, before that code is deployed.
 
+**GBP-W1 (2026-10-08):** the API constructs the credential service only when the three `GBP_OAUTH_*` variables are set. Then the key ring is mandatory, and the API refuses to start without a valid one. Set the key-ring variables and the `GBP_OAUTH_*` variables in the same change.
+
+The key ring also derives each in-flight OAuth authorization's PKCE verifier (HKDF, domain-separated; nothing stored). Removing a key version therefore also invalidates authorizations begun under it. They live at most 15 minutes, and the OWNER simply starts again.
+
 ## 2. Initial provisioning (once per environment)
 
 1. On a trusted machine, generate the key straight to the clipboard without displaying it (Windows):

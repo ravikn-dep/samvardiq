@@ -59,7 +59,7 @@ export async function startHarness(port: number): Promise<Harness> {
   const app = createPostgresClient({ connectionString: `postgres://samvardiq_app:${appPassword}@localhost:${port}/samvardiq_credentials_test` });
 
   async function truncateAll(): Promise<void> {
-    await owner.pool.query('TRUNCATE external_provider_credential_events, external_provider_credentials, external_provider_connections');
+    await owner.pool.query('TRUNCATE external_provider_credential_events, external_provider_credentials, external_provider_connections, provider_oauth_authorizations');
   }
 
   async function stop(): Promise<void> {

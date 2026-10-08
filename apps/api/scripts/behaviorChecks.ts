@@ -23,7 +23,7 @@
  *  - local rehearsal: a direct login as samvardiq_app, or SET ROLE as superuser.
  */
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import { PostgresApprovalRepository, PostgresGoalRepository, PostgresOrganizationRepository, PostgresRecommendationRepository, createPostgresClient as createDataFoundation } from '@samvardiq/data-foundation/dist/postgres/index.js';
 import { PostgresIdentityAuditRepository, PostgresIdentityProviderLinkRepository, PostgresIdentityRepository, PostgresMembershipRepository, createPostgresClient as createIdentity } from '@samvardiq/identity-access/dist/postgres/index.js';
@@ -31,7 +31,8 @@ import { AuthorizationService } from '@samvardiq/identity-access';
 import { PostgresClinicCmsConnectionRepository, PostgresConnectorAuditRepository, createPostgresClient as createCms } from '@samvardiq/clinic-cms-connector/dist/postgres/index.js';
 import { PostgresCommunicationChannelRepository, PostgresConversationRepository, PostgresMessageContentRepository, PostgresMessageRepository, PostgresWebhookEventDedupRepository, createPostgresClient as createComms } from '@samvardiq/communication-orchestration/dist/postgres/index.js';
 import { computePurgeAfter } from '@samvardiq/communication-orchestration';
-import { ACTIVE_KEY_VERSION_ENV, MASTER_KEYS_ENV, MasterKeyRing, ProviderCredentialService, createPostgresClient as createCredentials } from '@samvardiq/platform-credentials';
+import { ACTIVE_KEY_VERSION_ENV, MASTER_KEYS_ENV, MasterKeyRing, ProviderCredentialService, ProviderOAuthAuthorizations, createPostgresClient as createCredentials } from '@samvardiq/platform-credentials';
+import { GBP_CREDENTIAL_TYPE, GBP_PROVIDER, GBP_SCOPE, GbpConnectionService, gbpDatabase, GbpReadClient, GoogleOAuthClient, type HttpFetch } from '@samvardiq/google-business-profile';
 import { JobQueue, JobRegistry, createPostgresClient as createJobs } from '@samvardiq/platform-jobs';
 
 import { EXPECTED_TABLES, EXPECTED_TRIGGERS, TENANT_TABLES } from './structureChecks.js';
@@ -496,6 +497,70 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       return 'enqueue x4 = 1 job; free-text payload rejected; 4 contenders = 1 claim; foreign lease refused; payload/org rewrite and DELETE = 42501';
     });
 
+    // ---- GBP-W1 ------------------------------------------------------------------------------------------------------
+    await reporter.check('B18 GBP-W1 as the runtime role: single-use OAuth state bound to human+org, one open GBP connection per org, explicit binding only from candidates, one location per org and per location, binding history immutable to the runtime role', async () => {
+      // No Google call is made: the GBP service is given clients whose transport refuses to run. Discovery is emulated by
+      // inserting candidates as the runtime role, exactly as a completed authorization would.
+      const keyRing = MasterKeyRing.fromEnv({ [MASTER_KEYS_ENV]: `1:${randomBytes(32).toString('base64')}`, [ACTIVE_KEY_VERSION_ENV]: '1' });
+      const noNetwork: HttpFetch = async () => {
+        throw new Error('the staging verifier never contacts Google');
+      };
+      const credentials = new ProviderCredentialService(cred.db, keyRing);
+      const oauth = new ProviderOAuthAuthorizations(cred.db, keyRing);
+      const gbp = new GbpConnectionService({
+        db: gbpDatabase(cred.pool),
+        credentials,
+        authorizations: oauth,
+        oauth: new GoogleOAuthClient({ clientId: 'unused.apps.googleusercontent.com', clientSecret: 'unused' }, noNetwork),
+        gbp: new GbpReadClient(noNetwork),
+        redirectUris: [],
+      });
+      const ownerA = await authz.resolveTrustedContext({ principal: principal(`sub-${P}id-owner-a`), requestedOrganizationId: ORG_A });
+      const ownerB = await authz.resolveTrustedContext({ principal: principal(`sub-${P}id-owner-b`), requestedOrganizationId: ORG_B });
+      const refused = async (attempt: Promise<unknown>, name: string) => assert.rejects(attempt, (e: Error) => e.constructor.name === name);
+
+      const redirectUri = 'https://verifier.invalid/callback';
+      const kept = await oauth.begin(ownerA, { provider: GBP_PROVIDER, purpose: 'connect', redirectUri });
+      const used = await oauth.begin(ownerA, { provider: GBP_PROVIDER, purpose: 'connect', redirectUri });
+      await refused(oauth.consume(ownerB, { provider: GBP_PROVIDER, purpose: 'connect', state: used.state }), 'OAuthAuthorizationInvalidError');
+      const consumed = await oauth.consume(ownerA, { provider: GBP_PROVIDER, purpose: 'connect', state: used.state });
+      assert.equal(createHash('sha256').update(consumed.codeVerifier).digest('base64url'), used.codeChallenge, 'PKCE verifier re-derived server-side');
+      await refused(oauth.consume(ownerA, { provider: GBP_PROVIDER, purpose: 'connect', state: used.state }), 'OAuthAuthorizationInvalidError');
+      const stored = (await admin.pool.query(`select state_hash from public.provider_oauth_authorizations where organization_id = $1`, [ORG_A])).rows as { state_hash: string }[];
+      assert.ok(stored.length === 1 && !stored.some((r) => r.state_hash.includes(kept.state)), 'one unconsumed authorization left; only state hashes at rest');
+
+      const connect = (actor: typeof ownerA, account: string) =>
+        credentials.connect(actor, { provider: GBP_PROVIDER, externalAccountId: `accounts/${P}${account}`, grantedScopes: [GBP_SCOPE], credentialType: GBP_CREDENTIAL_TYPE, secret: Buffer.from(`${P}synthetic-refresh`) });
+      const connA = await connect(ownerA, 'a');
+      const connB = await connect(ownerB, 'b');
+      await refused(connect(ownerA, 'a2'), 'CredentialStoreError');
+      const location = `locations/${P}loc-1`;
+      const candidate = (org: string, connectionId: string, name: string) =>
+        inTx(cred.pool, { org }, (c) =>
+          c.query(
+            `insert into gbp_location_candidates (organization_id, connection_id, provider, location_name, account_name, account_display_name, title) values ($1, $2, $3, $4, $5, 'synthetic', 'synthetic')`,
+            [org, connectionId, GBP_PROVIDER, name, `accounts/${P}x`],
+          ),
+        );
+      await candidate(ORG_A, connA.connectionId, location);
+      await candidate(ORG_A, connA.connectionId, `locations/${P}loc-2`);
+      await candidate(ORG_B, connB.connectionId, location);
+
+      await refused(gbp.bind(ownerA, `locations/${P}loc-9`), 'GbpLocationNotAvailableError');
+      assert.equal((await gbp.bind(ownerA, location)).binding?.locationName, location);
+      await refused(gbp.bind(ownerA, `locations/${P}loc-2`), 'GbpConflictError');
+      await refused(gbp.bind(ownerB, location), 'GbpConflictError');
+      const disconnected = await gbp.disconnect(ownerB);
+      assert.equal(disconnected.googleAuthorization, 'NOT_REVOKED');
+      assert.equal((await gbp.status(ownerA)).candidates.length, 2, 'org A sees only its own candidates');
+      const crossOrg = await inTx(cred.pool, { org: ORG_A }, async (c) => (await c.query(`select 1 from gbp_location_candidates where organization_id = $1`, [ORG_B])).rows.length);
+      assert.equal(crossOrg, 0);
+      await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`delete from gbp_location_bindings where organization_id = '${ORG_A}'`)), '42501', 'runtime binding-history DELETE');
+      await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`update gbp_location_bindings set location_name = 'locations/x' where organization_id = '${ORG_A}'`)), '42501', 'runtime binding rewrite');
+      await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`update provider_oauth_authorizations set identity_id = 'x' where organization_id = '${ORG_A}'`)), '42501', 'runtime OAuth state rewrite');
+      return 'state single-use + human/org-bound, PKCE re-derived; second open GBP connection refused; bind only from candidates; one per org and per location; history DELETE/rewrite = 42501; disconnect NOT_REVOKED';
+    });
+
     // ---- missing organization context ------------------------------------------------------------------------------
     await reporter.check(`B12 missing-context fail-closed: all ${TENANT_TABLES.length} populated tenant tables return zero rows with no context, and writes are rejected`, async () => {
       const allPools = Object.values(pools);
@@ -518,6 +583,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
         [cms.pool, `insert into clinic_cms_connections (organization_id, connection_id, base_url, key_id, secret_reference, approved_scopes, timezone, enabled) values ('${ORG_A}', '${P}noctx', 'https://cms.invalid', 'k', 'env:X', '[]'::jsonb, 'Asia/Kolkata', true)`],
         [comms.pool, `insert into conversations (organization_id, conversation_id, channel_id, external_contact_id, state, preferred_language, booking_state) values ('${ORG_A}', '${P}noctx', '${P}chan-A', '${P}c', 'AI_ACTIVE', 'en-IN', 'NEW')`],
         [cred.pool, `insert into external_provider_connections (organization_id, connection_id, provider, status, granted_scopes, connected_by_identity_id) values ('${ORG_A}', '${P}noctx', 'w1b_synthetic', 'ACTIVE', '[]'::jsonb, '${P}id-owner-a')`],
+        [cred.pool, `insert into provider_oauth_authorizations (organization_id, authorization_id, state_hash, provider, purpose, identity_id, redirect_uri, key_version, expires_at) values ('${ORG_A}', '${P}noctx', '${'0'.repeat(64)}', 'google_business_profile', 'connect', '${P}id-owner-a', 'https://verifier.invalid/cb', 1, now() + interval '1 minute')`],
       ];
       for (const [pool, text] of writes) await expectSqlState(pool.query(text), '42501', 'no-context write');
       return `${TENANT_TABLES.length} tables x ${allPools.length} pools = 0 tenant rows visible (identity_audit_events: global events only, by design); ${writes.length} representative no-context writes = 42501`;
