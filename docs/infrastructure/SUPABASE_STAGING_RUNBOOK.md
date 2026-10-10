@@ -818,31 +818,36 @@ No site or redirect URLs are needed for password login. The API reads only `SUPA
 
 Nothing in this section contains a password, token, publishable or secret key, or database credential.
 
-## 31. GBP-W1: Google Business Profile connection (implemented 2026-10-08, NOT activated)
+## 31. GBP-W1: Google Business Profile connection (implemented 2026-10-10, NOT activated)
 
 **Status: source implemented and validated locally; not applied to staging.**
 - Staging is unchanged: digest `6869f39e9014efaf`, 21 tables, Railway on `f54ce59`.
 - Google is not connected. Production is not authorized and not deployed.
 - Design and threat matrix: `docs/integrations/GOOGLE_BUSINESS_PROFILE_ARCHITECTURE.md` §9–§11.
-- Founder decisions G1–G4: `ARCH-022`.
+- Founder decisions G1–G4 (approved 2026-10-10, superseding the 2026-10-08 draft): `ARCH-022`.
 
 **What activation will change:**
 - **Schema:** two migrations through the canonical chain, schema first:
   - `platform-credentials/0001_provider_oauth_authorizations`;
   - `google-business-profile/0000_google_business_profile`, a new journal `drizzle_google_business_profile`, run after platform-credentials.
-- **Tables:** 21 → 24 (`provider_oauth_authorizations`, `gbp_location_candidates`, `gbp_location_bindings`). There is also a new partial unique index on `external_provider_connections`.
+- **Tables:** 21 → 25 (`provider_oauth_authorizations`, `gbp_location_candidates`, `gbp_location_bindings`, `gbp_operation_events`). Also new: a partial unique index on `external_provider_connections`, and the trigger `gbp_operation_events_immutable` with its function `prevent_gbp_operation_event_mutation` (triggers and own functions 5 → 6).
 - **Authority digest:** changes from `6869f39e9014efaf`. The new reference is recorded at activation.
-- **Verifier:** expects 24 tables, the new grants (including column-level UPDATE on `gbp_location_bindings`), journals `platform-credentials=2` and `google-business-profile=1`, and behaviour check **B18**. B18 exercises the OAuth state, the one-open-connection rule and binding uniqueness as `samvardiq_app`, with no Google call.
-- **Verifier retention:** retained synthetic rows per behaviour-suite run grow from 22 to 30. The 2 GBP synthetic connections and 6 more credential events are kept because their events are immutable.
+- **Verifier:** expects 25 tables, the new grants (including column-level UPDATE on `gbp_location_bindings`, among them `access_lost_at`), 6 triggers and own functions, journals `platform-credentials=2` and `google-business-profile=1`, and behaviour check **B18**. As `samvardiq_app`, with no Google call, B18 exercises:
+  - the OAuth state and the one-open-connection rule;
+  - confirmed multi-location binding and global location uniqueness;
+  - a service operation refused without a service principal (request audited);
+  - immutability of history and audit.
+- **Verifier retention:** retained synthetic rows per behaviour-suite run grow from 22. The 2 GBP synthetic connections, their credential events and the one B18 operation event are kept because those events are immutable. The exact count is recorded at activation.
 - **Runtime:** with the five variables of `GOOGLE_BUSINESS_PROFILE_ACCESS_SETUP.md` §8, the API opens one extra single-connection pool. That makes 14 connections per instance with the jobs flags on, against the pooler's 15. Without them the API is unchanged and the GBP routes answer 503.
 
 **Activation sequence:**
 1. Prerequisites confirmed (access setup §8, items 1–5): Google project, API approval (300 QPM), APIs enabled, consent screen with test user, web OAuth client with the loopback redirect.
+   - After the migrations (step 3), the operator also provisions the GBP service principal for `samvardiq-staging-clinic` (access setup §8 item 8). This creates identity `svc-gbp-samvardiq-staging-clinic`, its link and an ACTIVE MEMBER membership, plus 3 system audit events. The Founder's identity, OWNER membership and audit history are untouched.
 2. Pre-audit: structure 14/14, digest `6869f39e9014efaf`, Founder identity hash intact.
 3. Apply the migrations; post-migration structure and behaviour suite (B0–B18); record the new digest.
 4. The Founder sets the Railway variables (master key generated per the keys runbook, never displayed).
 5. Deploy the exact validated commit; prove provenance through the GitHub deployment record.
-6. **Live proof (Founder, local loopback, G4-A):** a local script prompts for the Founder's Supabase password (hidden) and signs in. It starts the authorization from the API, opens Google's consent page, receives the redirect on `127.0.0.1:53682`, and posts `{state, code}` to the API with the session. It then lists the discovered locations; the Founder explicitly binds the clinic's location, and status is checked.
+6. **Live proof (Founder, local loopback, G4-A):** a local script prompts for the Founder's Supabase password (hidden) and signs in. It starts the authorization from the API, opens Google's consent page, receives the redirect on `127.0.0.1:53682`, and posts `{state, code}` to the API with the session. It then lists the discovered locations; the Founder explicitly selects and confirms one or more of the clinic's locations. Refresh discovery and verify run as the GBP service principal, MEMBER/VIEWER denial is re-checked, and the status and `gbp_operation_events` (human request + service outcome) are inspected.
 7. Prove no write path: the end-to-end assertion that every Business Profile request was a GET, plus source scans.
 8. Final audit.
 
