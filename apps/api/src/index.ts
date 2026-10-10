@@ -30,7 +30,7 @@ import {
 import { DeterministicCommunicationInterpreter, retentionPurgeJob, retentionPurgeSchedule, WhatsAppCloudProvider } from '@samvardiq/communication-orchestration';
 import { createPostgresClient as createJobsClient, JobQueue, JobRegistry } from '@samvardiq/platform-jobs';
 import { createPostgresClient as createCredentialsClient, MasterKeyRing, ProviderCredentialService, ProviderOAuthAuthorizations } from '@samvardiq/platform-credentials';
-import { GbpConnectionService, gbpDatabase, GbpReadClient, GoogleOAuthClient, loadGbpConfigFromEnv } from '@samvardiq/google-business-profile';
+import { GbpConnectionService, gbpDatabase, GbpReadClient, gbpServicePrincipalResolver, GoogleOAuthClient, loadGbpConfigFromEnv } from '@samvardiq/google-business-profile';
 
 import { loadConfigFromEnv, runtimePoolConfig } from './config.js';
 import { startJobsHost, type JobsHost } from './jobsHost.js';
@@ -115,6 +115,8 @@ async function main(): Promise<void> {
             authorizations: new ProviderOAuthAuthorizations(credentialsClient.db, keyRing),
             oauth: new GoogleOAuthClient({ clientId: gbpConfig.clientId, clientSecret: gbpConfig.clientSecret }),
             gbp: new GbpReadClient(),
+            // G1: stored-credential operations run as the organization's operator-provisioned GBP service principal.
+            servicePrincipal: gbpServicePrincipalResolver(authz),
             redirectUris: gbpConfig.redirectUris,
           });
         })()

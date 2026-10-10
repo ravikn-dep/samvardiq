@@ -18,6 +18,8 @@ import { GoalReadService } from '@samvardiq/application-services';
 import { buildServer } from '../../src/server.js';
 import { commsDeps, defaultTestConfig } from '../setup.js';
 import { provisionHumanOwner, type HumanOwnerInput } from '../../scripts/provisionHumanOwner.js';
+import { gbpServiceIdentityId, provisionGbpServicePrincipal } from '../../scripts/provisionGbpServicePrincipal.js';
+import { gbpServicePrincipalResolver } from '@samvardiq/google-business-profile';
 import { startLocalSupabaseCluster, type LocalSupabaseCluster } from '../../scripts/localSupabaseCluster.js';
 import { createTestIssuer, type TestIssuer } from '../../../../packages/identity-access/test/jwksTestHelper.js';
 
@@ -168,4 +170,26 @@ test('J/L/N/O: suspended identity, suspended membership, VIEWER and MEMBER roles
   assert.equal((await invite()).statusCode, 403, 'J: suspended identity');
   assert.deepEqual((await get('/v1/me/organizations', token)).json(), []);
   assert.equal(await count(`organization_memberships where identity_id = 'invitee-2'`), 0, 'nothing was created by any refused attempt');
+});
+
+test('GBP-W1 G1: the operator provisions an existing organization’s GBP service principal (dry run, apply, idempotent) — a service MEMBER of that organization only, resolvable by the GBP resolver, refused elsewhere', async () => {
+  await provisionHumanOwner(cluster.owner, INPUT, true);
+  const before = await count('identity_audit_events');
+  assert.equal(await provisionGbpServicePrincipal(cluster.owner, INPUT.organizationId, false), 'would-provision');
+  assert.equal(await count('identity_audit_events'), before, 'dry run writes nothing');
+  assert.equal(await provisionGbpServicePrincipal(cluster.owner, INPUT.organizationId, true), 'provisioned');
+  assert.equal(await provisionGbpServicePrincipal(cluster.owner, INPUT.organizationId, true), 'already-provisioned');
+  assert.equal(await count('identity_audit_events'), before + 3, 'identity, link and membership audited once, as the system actor');
+
+  const authz = new AuthorizationService(new PostgresIdentityRepository(identityClient.db), new PostgresIdentityProviderLinkRepository(identityClient.db), new PostgresMembershipRepository(identityClient.db));
+  const resolve = gbpServicePrincipalResolver(authz);
+  const context = await resolve(INPUT.organizationId);
+  assert.deepEqual({ p: context.principalType, r: context.role, o: context.organizationId, a: context.approverRole }, { p: 'service', r: 'MEMBER', o: INPUT.organizationId, a: undefined });
+  await assert.rejects(resolve('another-org'), 'no principal for an organization without one');
+
+  await assert.rejects(provisionGbpServicePrincipal(cluster.owner, 'no-such-org', true), /does not exist/);
+  await assert.rejects(provisionGbpServicePrincipal(cluster.owner, 'Bad Id', true), /organization-id/);
+  await cluster.owner.pool.query(`update organization_memberships set status = 'SUSPENDED' where identity_id = $1`, [gbpServiceIdentityId(INPUT.organizationId)]);
+  await assert.rejects(resolve(INPUT.organizationId), 'kill switch: a suspended service membership resolves nothing');
+  await assert.rejects(provisionGbpServicePrincipal(cluster.owner, INPUT.organizationId, true), /refusing to repair/);
 });

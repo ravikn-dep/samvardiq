@@ -61,6 +61,12 @@ export interface ReauthorizeInput extends StoreCredentialInput {
   grantedScopes?: string[];
 }
 
+/** Handed to a `useCredential` callback alongside the plaintext. */
+export interface CredentialInUse {
+  /** Store the provider-rotated successor of the credential being used (compare-and-swap; false if superseded or no longer ACTIVE). */
+  replace(secret: Uint8Array): Promise<boolean>;
+}
+
 export interface DisconnectResult {
   connection: ExternalProviderConnection;
   /**
@@ -241,7 +247,7 @@ export class ProviderCredentialService {
    * mismatched master key → KeyUnavailableError with no state change (an
    * operator fault must not force every clinic to reconnect).
    */
-  async useCredential<T>(actor: TrustedOrganizationContext, connectionId: string, credentialType: string, use: (secret: Buffer) => Promise<T>): Promise<T> {
+  async useCredential<T>(actor: TrustedOrganizationContext, connectionId: string, credentialType: string, use: (secret: Buffer, credential: CredentialInUse) => Promise<T>): Promise<T> {
     if (!canUseProviderCredentials(actor)) throw new CredentialAccessDeniedError();
     assertIdentifier(credentialType, 'credentialType');
     const organizationId = actor.organizationId;
@@ -274,8 +280,11 @@ export class ProviderCredentialService {
       if (error instanceof CredentialInvalidError) await this.#markNeedsReauth(actor, connectionId, row.credential.credentialId).catch(() => undefined);
       throw error;
     }
+    const inUse: CredentialInUse = {
+      replace: (replacement) => this.#replaceInUse(actor, connectionId, row.provider, credentialType, row.credential.credentialId, replacement),
+    };
     try {
-      return await use(secret);
+      return await use(secret, inUse);
     } catch (error) {
       // The provider refused this exact credential: re-authorization is the only remedy (same guard as a tampered envelope).
       if (error instanceof ProviderCredentialRejectedError) await this.#markNeedsReauth(actor, connectionId, row.credential.credentialId).catch(() => undefined);
@@ -298,6 +307,40 @@ export class ProviderCredentialService {
         .orderBy(desc(connections.connectedAt))
         .limit(1);
       return open ? this.#read(tx, organizationId, open.connectionId) : null;
+    });
+  }
+
+  /**
+   * GBP-W1 (ARCH-022 amendment to ARCH-020 §7): a provider that ROTATES the
+   * credential during use (e.g. an OAuth refresh returning a new refresh token)
+   * stores its successor. Compare-and-swap: only while the connection is still
+   * not DISCONNECTED and the credential that was used is still the stored one
+   * — so a concurrent rotation, an OWNER re-authorization or a disconnect is
+   * never overwritten with an older value, and a disconnected connection is
+   * never revived. A NEEDS_REAUTH set meanwhile by a concurrent use of the
+   * SAME (now superseded) credential is cleared: the provider has just issued
+   * its successor. Returns whether the replacement was stored. The successor
+   * gets a new credential ID (as in `reauthorize`).
+   */
+  async #replaceInUse(actor: TrustedOrganizationContext, connectionId: string, provider: string, credentialType: string, usedCredentialId: string, replacement: Uint8Array): Promise<boolean> {
+    assertSecret(replacement);
+    const organizationId = actor.organizationId;
+    return this.#tx(organizationId, async (tx) => {
+      const connection = await this.#lock(tx, organizationId, connectionId);
+      if (connection.status === 'DISCONNECTED') return false;
+      const replaced = await tx
+        .delete(credentials)
+        .where(and(eq(credentials.organizationId, organizationId), eq(credentials.connectionId, connectionId), eq(credentials.credentialId, usedCredentialId)))
+        .returning({ credentialId: credentials.credentialId });
+      if (!replaced.length) return false;
+      const credentialId = randomUUID();
+      const binding: CredentialBinding = { organizationId, provider, credentialId, credentialType };
+      const envelope = sealCredential(this.keyRing, binding, replacement);
+      await tx.insert(credentials).values({ ...binding, connectionId, algorithm: ENVELOPE_ALGORITHM, ...envelope });
+      await tx.update(connections).set({ status: 'ACTIVE', updatedAt: new Date() }).where(and(eq(connections.organizationId, organizationId), eq(connections.connectionId, connectionId)));
+      await this.#audit(tx, organizationId, connectionId, actor, 'CREDENTIAL_DELETED', usedCredentialId);
+      await this.#audit(tx, organizationId, connectionId, actor, 'CREDENTIAL_REPLACED', credentialId, envelope.keyVersion);
+      return true;
     });
   }
 

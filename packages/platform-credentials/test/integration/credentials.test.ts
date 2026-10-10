@@ -29,6 +29,7 @@ import {
   keyVersionUsage,
   MASTER_KEYS_ENV,
   MasterKeyRing,
+  ProviderCredentialRejectedError,
   ProviderCredentialService,
 } from '../../src/index.js';
 import { startHarness, type Harness } from './harness.js';
@@ -564,5 +565,69 @@ describe('platform-credentials against real PostgreSQL', () => {
     }
     assert.equal((await service().getConnection(ownerA, c.connectionId)).status, 'ACTIVE', 'the replaced connection stays ACTIVE');
     assert.equal((await h.owner.pool.query(`select count(*)::int as n from external_provider_credential_events where event_type = 'CONNECTION_NEEDS_REAUTH'`)).rows[0].n, 0);
+  });
+
+  test('BF/BN (GBP-W1 rotation): a provider-rotated successor is stored by compare-and-swap — never over a newer credential, never into a disconnected connection', async () => {
+    const c = await connect();
+    const latest = async () => use(service(), svc[ORG_A]!, c.connectionId);
+
+    // Normal rotation: the successor replaces the used credential (new credential ID), audited as the service principal.
+    const rotated = secretFor('rotated');
+    assert.equal(await service().useCredential(svc[ORG_A]!, c.connectionId, REFRESH, async (_s, k) => k.replace(rotated)), true);
+    assert.deepEqual(await latest(), rotated);
+    const ids = (await h.owner.pool.query(`select credential_id from external_provider_credentials`)).rows;
+    assert.equal(ids.length, 1);
+    assert.notEqual(ids[0].credential_id, c.credentials[0]!.credentialId);
+    assert.equal((await h.owner.pool.query(`select actor_principal_type from external_provider_credential_events where event_type = 'CREDENTIAL_REPLACED'`)).rows[0].actor_principal_type, 'service');
+
+    // Stale write: an OWNER re-authorizes while a use of the old credential is in flight — the late successor is discarded.
+    const owners = secretFor('owner-reauth');
+    const stale = await service().useCredential(svc[ORG_A]!, c.connectionId, REFRESH, async (_s, k) => {
+      await service().reauthorize(ownerA, c.connectionId, { credentialType: REFRESH, secret: owners });
+      return k.replace(secretFor('stale'));
+    });
+    assert.equal(stale, false);
+    assert.deepEqual(await latest(), owners);
+
+    // Two concurrent uses of one credential both receive a successor: exactly one is stored.
+    let arrived = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => (release = resolve));
+    const results = await Promise.all(
+      [1, 2].map((n) =>
+        service().useCredential(svc[ORG_A]!, c.connectionId, REFRESH, async (_s, k) => {
+          if (++arrived === 2) release(); // both hold the SAME credential before either replaces it
+          await barrier;
+          return k.replace(secretFor(`race-${n}`));
+        }),
+      ),
+    );
+    assert.deepEqual(results.sort(), [false, true]);
+    assert.equal((await h.owner.pool.query(`select count(*)::int as n from external_provider_credentials`)).rows[0].n, 1);
+
+    // Disconnect during use: the successor never revives the connection.
+    const revived = await service().useCredential(svc[ORG_A]!, c.connectionId, REFRESH, async (_s, k) => {
+      await service().disconnect(ownerA, c.connectionId);
+      return k.replace(secretFor('after-disconnect'));
+    });
+    assert.equal(revived, false);
+    assert.equal((await service().getConnection(ownerA, c.connectionId)).status, 'DISCONNECTED');
+    assert.equal((await h.owner.pool.query(`select count(*)::int as n from external_provider_credentials`)).rows[0].n, 0);
+  });
+
+  test('rotation race: a concurrent use that failed on the superseded credential (NEEDS_REAUTH) is healed by the successor the provider just issued', async () => {
+    const c = await connect();
+    const successor = secretFor('successor');
+    const stored = await service().useCredential(svc[ORG_A]!, c.connectionId, REFRESH, async (_s, k) => {
+      // A concurrent use of the same credential was rejected by the provider first (old token already rotated away).
+      await service().useCredential(svc[ORG_A]!, c.connectionId, REFRESH, async () => {
+        throw new ProviderCredentialRejectedError();
+      }).catch(() => undefined);
+      assert.equal((await service().getConnection(ownerA, c.connectionId)).status, 'NEEDS_REAUTH');
+      return k.replace(successor);
+    });
+    assert.equal(stored, true);
+    assert.equal((await service().getConnection(ownerA, c.connectionId)).status, 'ACTIVE');
+    assert.deepEqual(await use(service(), svc[ORG_A]!, c.connectionId), successor);
   });
 });
