@@ -28,7 +28,7 @@ Enable the Business Profile APIs listed on Google's Basic setup page (it current
 
 ## 5. Configure OAuth (GBP-W1 is implemented; do this after approval)
 
-Re-checked against Google's documentation on 2026-10-08.
+Re-checked against Google's documentation on 2026-10-08 and 2026-10-10.
 
 **Consent screen:**
 - Samvardiq app name, support email, privacy policy URL.
@@ -41,7 +41,7 @@ Re-checked against Google's documentation on 2026-10-08.
 
 **OAuth client:**
 - Create a **Web application** client.
-- **Authorized redirect URIs** must match exactly, character for character. For the staging proof, register the loopback URI `http://127.0.0.1:53682/callback`; Google allows plain http only for loopback.
+- **Authorized redirect URIs** must match exactly, character for character. For the staging proof, register the loopback URI `http://127.0.0.1:53682/callback`. Google's web-server rules exempt localhost/loopback from the HTTPS and raw-IP requirements, and allow plain http only for loopback.
 - When the web app is deployed, also register `https://<web app host>/integrations/google-business-profile/callback`.
 - No JavaScript origin is needed: the browser never calls Google with the client.
 
@@ -72,3 +72,6 @@ The client secret will be placed directly into the hosting secret store when GBP
 
    Set all of them together. With any one missing, the API refuses to start, which is deliberate: it fails closed rather than half-enabling OAuth.
 7. **Staging migrations** `platform-credentials/0001` and `google-business-profile/0000` applied through the canonical chain, before the deployment that uses them (schema first; runbook §31).
+8. **GBP service principal** provisioned for the organization by the operator (`apps/api/scripts/provisionGbpServicePrincipal.ts --organization-id samvardiq-staging-clinic`, dry run first, then `--apply`). Without it the connect button is refused before Google consent (G1).
+
+**Revocation (note for the OWNER):** "Disconnect → also revoke at Google" removes Samvardiq's access to that Google account for **every** Samvardiq organization connected with the same Google user. That is Google's documented behaviour: revocation is per Google user and project, not per clinic. A local-only disconnect leaves the Google-side grant in place until it is removed in the Google Account's third-party access page.

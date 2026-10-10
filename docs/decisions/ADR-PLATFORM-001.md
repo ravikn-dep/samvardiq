@@ -146,9 +146,27 @@ A composite foreign key (`organization_id, connection_id, provider`) keeps a cre
 
 ---
 
-## First consumer: GBP-W1 (2026-10-08, implemented, not activated)
+## First consumer and GBP-W1 amendment (2026-10-10, implemented, not activated)
 
-Founder decision G1 (`ARCH-022`) keeps this ADR unchanged: no human, OWNER included, can obtain plaintext. Google Business Profile discovery uses the access token from the OWNER's own OAuth completion, in memory, before it is stored. Additions to `packages/platform-credentials`, all provider-neutral:
+Founder decision G1 (`ARCH-022`, Modified A) amends this ADR **narrowly**. Everything above stays in force, in particular: no human, OWNER included, can obtain plaintext, and only service principals use credentials. The amendment adds three things.
+
+1. **OWNER-requested service operations.**
+   - A human OWNER may request a provider operation that uses the stored credential. It is executed by the organization's own service principal, never by the human.
+   - The provider connector must:
+     - resolve that principal fresh through `resolveTrustedContext`, for the OWNER's organization only;
+     - run one allow-listed operation inside `useCredential`;
+     - audit the human request and the service outcome separately.
+   - For GBP, the operations are `GBP_DISCOVER_LOCATIONS`, `GBP_VERIFY_CONNECTION` and `GBP_REVOKE_CONNECTION`.
+   - The principal is a dedicated per-organization identity (`samvardiq-gbp-connector` link), operator-provisioned (ADR-IDENTITY-002 Candidate A).
+   - There is no generic OWNER credential-use path.
+2. **Provider-rotated credentials (§7).**
+   - `useCredential` hands its callback a `CredentialInUse` whose `replace(secret)` stores a provider-issued successor (e.g. a rotated OAuth refresh token) as the service principal.
+   - It is a compare-and-swap: it applies only while the connection is not DISCONNECTED and the credential used is still the stored one. A concurrent rotation, an OWNER re-authorization or a disconnect is never overwritten, and a disconnected connection is never revived.
+   - The successor gets a new credential ID. The swap is audited as `CREDENTIAL_DELETED` + `CREDENTIAL_REPLACED` with a service actor.
+   - A NEEDS_REAUTH caused meanwhile by a concurrent use of the superseded credential is cleared.
+3. **Remote revocation (§9).** The connector revokes through `useCredential` *before* the generic local disconnect, as this ADR already required, and reports the provider's outcome truthfully. The generic `disconnect` still returns `remoteRevocation: 'NOT_ATTEMPTED'`.
+
+Provider-neutral additions to `packages/platform-credentials`:
 
 - **`ProviderOAuthAuthorizations`** (migration `0001_provider_oauth_authorizations`, table `provider_oauth_authorizations`):
   - single-use OAuth state, human OWNER only, bound to organization, identity, provider and purpose;
@@ -157,8 +175,8 @@ Founder decision G1 (`ARCH-022`) keeps this ADR unchanged: no human, OWNER inclu
   - 10-minute expiry, capped at 15 minutes in the database;
   - RLS + FORCE RLS; grants SELECT, INSERT, DELETE.
 - **PKCE verifier:** never stored. It is re-derived with HKDF from the master key version recorded at begin, with the domain label `samvardiq.oauth-pkce.v1`, the organization and the authorization ID. The key ring is used for derivation as well as wrapping, with domain separation, just as the key check value already uses it for an HMAC.
-- **`findOpenConnection(actor, provider)`**: OWNER-only, non-secret metadata of the organization's one open connection to a provider.
-- **`ProviderCredentialRejectedError`**: a provider connector throws it inside `useCredential` when the provider rejects the stored credential (e.g. OAuth `invalid_grant`). `useCredential` then moves the connection to NEEDS_REAUTH, the same guarded transition and audited `CONNECTION_NEEDS_REAUTH` event as a tampered envelope, and rethrows.
-- **Duplicate-connection policy for GBP:** at most one open Google Business Profile connection per organization (G3 pilot). It is enforced by a partial unique index that the `google-business-profile` migration places on `external_provider_connections`. Other providers keep the generic behaviour.
+- **`findOpenConnection(actor, provider)`:** OWNER-only, non-secret metadata of the organization's open connection to a provider.
+- **`ProviderCredentialRejectedError`:** a provider connector throws it inside `useCredential` when the provider rejects the stored credential (e.g. OAuth `invalid_grant`). `useCredential` then moves the connection to NEEDS_REAUTH (same guarded, audited transition as a tampered envelope) and rethrows.
+- **Duplicate-connection policy for GBP:** at most one open Google Business Profile connection per organization (G3, the GBP-W1 operational constraint). It is enforced by a partial unique index that the `google-business-profile` migration places on `external_provider_connections`. Other providers keep the generic behaviour.
 
 Details: `docs/integrations/GOOGLE_BUSINESS_PROFILE_ARCHITECTURE.md` §9–§11.
