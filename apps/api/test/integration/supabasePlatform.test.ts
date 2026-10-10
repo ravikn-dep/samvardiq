@@ -162,7 +162,7 @@ test('the platform-global list is exhaustive: every other public table keeps FOR
   );
   const listed = new Set<string>(PLATFORM_GLOBAL_TABLES);
   const unlisted = (rows as { relname: string; forced: boolean; policies: number }[]).filter((r) => !listed.has(r.relname));
-  assert.equal(unlisted.length, 19, '24 tables - 5 platform-global');
+  assert.equal(unlisted.length, 20, '25 tables - 5 platform-global');
   for (const row of unlisted) {
     assert.equal(row.forced, true, `${row.relname}: FORCE RLS`);
     assert.ok(row.policies >= 1, `${row.relname}: tenant policy present`);

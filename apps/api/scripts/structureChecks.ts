@@ -16,7 +16,8 @@ import { Reporter, type AdminPostgres } from './stagingDb.js';
 export const EXPECTED_TABLES = [
   'approval_records', 'approval_requests', 'clinic_cms_connections', 'clinic_cms_connector_evidence', 'communication_channels',
   'communication_message_content', 'communication_messages', 'conversation_handoffs', 'conversations', 'external_provider_connections',
-  'external_provider_credential_events', 'external_provider_credentials', 'gbp_location_bindings', 'gbp_location_candidates', 'goals', 'identities',
+  'external_provider_credential_events', 'external_provider_credentials', 'gbp_location_bindings', 'gbp_location_candidates', 'gbp_operation_events', 'goals',
+  'identities',
   'identity_audit_events', 'identity_provider_links', 'organization_memberships', 'organizations', 'platform_jobs', 'provider_oauth_authorizations',
   'recommendations', 'webhook_event_dedup',
 ] as const;
@@ -42,6 +43,8 @@ export const EXPECTED_APP_PRIVILEGES: Record<string, string> = {
   // GBP-W1: binding history is never deleted, only ended (column-level UPDATE); candidates are replaced wholesale (no UPDATE).
   gbp_location_bindings: 'INSERT,SELECT',
   gbp_location_candidates: 'DELETE,INSERT,SELECT',
+  // GBP-W1 (G1): append-only operation audit, immutable via trigger.
+  gbp_operation_events: 'INSERT,SELECT',
   goals: 'DELETE,INSERT,SELECT,UPDATE',
   identities: 'INSERT,SELECT,UPDATE',
   identity_audit_events: 'INSERT,SELECT',
@@ -70,7 +73,7 @@ export const EXPECTED_JOURNALS: Record<string, { schema: string; migrations: num
 export const EXPECTED_APP_COLUMN_UPDATES: Record<string, string> = {
   external_provider_connections: 'disconnected_at,external_account_id,granted_scopes,status,updated_at',
   external_provider_credentials: 'key_check,key_version,rotated_at,wrap_nonce,wrap_tag,wrapped_key',
-  gbp_location_bindings: 'unbind_reason,unbound_at,unbound_by_identity_id',
+  gbp_location_bindings: 'access_lost_at,unbind_reason,unbound_at,unbound_by_identity_id',
   platform_jobs: 'attempts,finished_at,last_failure_class,lease_expires_at,lease_id,lease_owner,run_after,started_at,status,updated_at',
 };
 
@@ -80,6 +83,7 @@ export const EXPECTED_TRIGGERS = [
   { table: 'identity_audit_events', name: 'identity_audit_events_immutable', fn: 'prevent_identity_audit_event_mutation' },
   { table: 'conversation_handoffs', name: 'conversation_handoffs_immutable', fn: 'prevent_conversation_handoff_mutation' },
   { table: 'external_provider_credential_events', name: 'external_provider_credential_events_immutable', fn: 'prevent_credential_event_mutation' },
+  { table: 'gbp_operation_events', name: 'gbp_operation_events_immutable', fn: 'prevent_gbp_operation_event_mutation' },
 ] as const;
 
 const TABLE_PRIVS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] as const;
