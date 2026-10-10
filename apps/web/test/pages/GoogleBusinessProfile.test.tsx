@@ -12,9 +12,13 @@ import { GBP_CALLBACK_PATH, GBP_PENDING_ORGANIZATION_KEY, GoogleBusinessProfileP
 const STATE = 's'.repeat(43);
 const connected: GbpStatus = {
   connection: { connectionId: 'c1', status: 'ACTIVE', googleAccountId: 'accounts/111', grantedScopes: [], connectedAt: 'x', updatedAt: 'x' },
-  binding: null,
-  candidates: [{ locationName: 'locations/9001', accountName: 'accounts/111', accountDisplayName: 'Owner', title: '<img src=x onerror=alert(1)>Clinic', addressSummary: 'Hyderabad' }],
+  bindings: [],
+  candidates: [
+    { locationName: 'locations/9001', accountName: 'accounts/111', accountDisplayName: 'Owner', title: '<img src=x onerror=alert(1)>Clinic', addressSummary: 'Hyderabad' },
+    { locationName: 'locations/9002', accountName: 'accounts/111', accountDisplayName: 'Owner', title: 'Branch', addressSummary: null },
+  ],
 };
+const binding = (locationName: string, title: string, accessLostAt: string | null = null) => ({ locationName, accountName: 'accounts/111', title, boundByIdentityId: 'owner', boundAt: 'x', accessLostAt });
 
 let currentPath = '';
 function PathProbe() {
@@ -80,7 +84,7 @@ describe('GoogleBusinessProfile page', () => {
 
   it('connect: asks the API for an authorization with this origin’s callback, remembers the organization for this tab, and leaves for Google', async () => {
     const apiClient = {
-      getGbpStatus: vi.fn().mockResolvedValue({ connection: null, binding: null, candidates: [] }),
+      getGbpStatus: vi.fn().mockResolvedValue({ connection: null, bindings: [], candidates: [] }),
       beginGbpAuthorization: vi.fn().mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?x', expiresAt: 'x' }),
     } as unknown as SamvardiqApiClient;
     renderAt('/org/org-A/integrations/google-business-profile', apiClient);
@@ -90,26 +94,72 @@ describe('GoogleBusinessProfile page', () => {
     expect(sessionStorage.getItem(GBP_PENDING_ORGANIZATION_KEY)).toBe('org-A');
   });
 
-  it('binds only by explicit choice; provider titles render as inert text', async () => {
-    const bound: GbpStatus = { ...connected, binding: { locationName: 'locations/9001', accountName: 'accounts/111', title: 'Clinic', boundByIdentityId: 'owner', boundAt: 'x' } };
-    const apiClient = { getGbpStatus: vi.fn().mockResolvedValue(connected), bindGbpLocation: vi.fn().mockResolvedValue(bound) } as unknown as SamvardiqApiClient;
+  it('BP/AX: several locations are bound only after selecting them AND confirming the exact selection; provider titles render as inert text', async () => {
+    const bound: GbpStatus = { ...connected, bindings: [binding('locations/9001', 'Clinic'), binding('locations/9002', 'Branch')] };
+    const apiClient = { getGbpStatus: vi.fn().mockResolvedValue(connected), bindGbpLocations: vi.fn().mockResolvedValue(bound) } as unknown as SamvardiqApiClient;
     const { container } = renderAt('/org/org-A/integrations/google-business-profile', apiClient);
     expect(await screen.findByText(/<img src=x onerror=alert\(1\)>Clinic/)).toBeInTheDocument();
     expect(container.querySelector('img')).toBeNull();
-    expect(apiClient.bindGbpLocation).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: 'Bind this location' }));
-    expect(apiClient.bindGbpLocation).toHaveBeenCalledWith('org-A', 'locations/9001');
-    expect(await screen.findByText('Clinic')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bind selected (0)' })).toBeDisabled();
+    for (const box of screen.getAllByRole('checkbox')) await userEvent.click(box);
+    await userEvent.click(screen.getByRole('button', { name: 'Bind selected (2)' }));
+    expect(apiClient.bindGbpLocations).not.toHaveBeenCalled();
+    expect(screen.getByRole('group', { name: 'Confirm binding' })).toHaveTextContent('Branch');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm binding' }));
+    expect(apiClient.bindGbpLocations).toHaveBeenCalledWith('org-A', ['locations/9001', 'locations/9002']);
+    expect(await screen.findByRole('heading', { name: 'Bound locations' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Unbind' })).toHaveLength(2);
   });
 
-  it('disconnect says plainly that Google-side access was not revoked', async () => {
+  it('BA: a binding Google no longer returns is shown as not usable; unbinding is per location', async () => {
+    const status: GbpStatus = { ...connected, bindings: [binding('locations/9001', 'Clinic'), binding('locations/9002', 'Branch', '2026-10-10T00:00:00Z')] };
+    const apiClient = { getGbpStatus: vi.fn().mockResolvedValue(status), unbindGbpLocation: vi.fn().mockResolvedValue({ ...status, bindings: [status.bindings[0]!] }) } as unknown as SamvardiqApiClient;
+    renderAt('/org/org-A/integrations/google-business-profile', apiClient);
+    expect(await screen.findByText(/not accessible with the connected Google account/)).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Unbind' })[1]!);
+    expect(apiClient.unbindGbpLocation).toHaveBeenCalledWith('org-A', 'locations/9002');
+  });
+
+  it('refresh and verify are server operations; the page shows only the returned status', async () => {
     const apiClient = {
       getGbpStatus: vi.fn().mockResolvedValue(connected),
-      disconnectGbp: vi.fn().mockResolvedValue({ connection: null, binding: null, candidates: [], googleAuthorization: 'NOT_REVOKED' }),
+      refreshGbpDiscovery: vi.fn().mockResolvedValue(connected),
+      verifyGbpConnection: vi.fn().mockResolvedValue({ ...connected, health: 'HEALTHY', checkedAt: 'x' }),
     } as unknown as SamvardiqApiClient;
     renderAt('/org/org-A/integrations/google-business-profile', apiClient);
-    await userEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
-    expect(await screen.findByRole('status')).toHaveTextContent(/Google may still list Samvardiq/);
+    await userEvent.click(await screen.findByRole('button', { name: 'Refresh locations' }));
+    expect(apiClient.refreshGbpDiscovery).toHaveBeenCalledWith('org-A');
+    await userEvent.click(screen.getByRole('button', { name: 'Verify connection' }));
+    expect(await screen.findByRole('status')).toHaveTextContent(/Connection verified/);
+  });
+
+  it('disconnect needs confirmation; revocation is opt-in with its cross-organization warning; the outcome is reported truthfully (BD)', async () => {
+    const apiClient = {
+      getGbpStatus: vi.fn().mockResolvedValue(connected),
+      disconnectGbp: vi.fn().mockResolvedValueOnce({ connection: null, bindings: [], candidates: [], googleRevocation: 'FAILED' }),
+    } as unknown as SamvardiqApiClient;
+    renderAt('/org/org-A/integrations/google-business-profile', apiClient);
+    await userEvent.click(await screen.findByRole('button', { name: 'Disconnect…' }));
+    expect(apiClient.disconnectGbp).not.toHaveBeenCalled();
+    const revoke = screen.getByRole('checkbox', { name: /revoke Samvardiq’s access at Google/ });
+    expect(revoke).not.toBeChecked();
+    expect(screen.getByRole('group', { name: 'Confirm disconnect' })).toHaveTextContent(/every Samvardiq organization connected with this Google account/);
+    await userEvent.click(revoke);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm disconnect' }));
+    expect(apiClient.disconnectGbp).toHaveBeenCalledWith('org-A', true);
+    expect(await screen.findByRole('status')).toHaveTextContent(/Google did not confirm the revocation/);
+  });
+
+  it('a local-only disconnect says plainly that Google-side access remains', async () => {
+    const apiClient = {
+      getGbpStatus: vi.fn().mockResolvedValue(connected),
+      disconnectGbp: vi.fn().mockResolvedValue({ connection: null, bindings: [], candidates: [], googleRevocation: 'NOT_REQUESTED' }),
+    } as unknown as SamvardiqApiClient;
+    renderAt('/org/org-A/integrations/google-business-profile', apiClient);
+    await userEvent.click(await screen.findByRole('button', { name: 'Disconnect…' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm disconnect' }));
+    expect(apiClient.disconnectGbp).toHaveBeenCalledWith('org-A', false);
+    expect(await screen.findByRole('status')).toHaveTextContent(/Google still lists Samvardiq/);
   });
 
   it('a non-OWNER sees the server’s denial, never data', async () => {

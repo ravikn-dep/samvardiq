@@ -20,6 +20,7 @@ export const GBP_CREDENTIAL_TYPE = 'oauth_refresh_token';
 
 const AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 const ACCOUNTS_ENDPOINT = 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts';
 const LOCATIONS_ENDPOINT = (accountName: string) => `https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`;
 const TIMEOUT_MS = 10_000;
@@ -143,17 +144,39 @@ export class GoogleOAuthClient {
    * Server-side refresh (service-principal path only, via ARCH-020 useCredential).
    * `invalid_grant` (revoked, expired, or superseded refresh token) becomes
    * ProviderCredentialRejectedError, which moves the connection to NEEDS_REAUTH.
-   * Google does not rotate refresh tokens on refresh; a returned one is ignored, and if
-   * the old one ever stops working that same path asks the OWNER to reconnect.
+   * Google normally keeps the refresh token; if a response ever carries a new
+   * one it is returned so the caller can store it (compare-and-swap, BF).
    */
-  async refreshAccessToken(refreshToken: string): Promise<string> {
+  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; refreshToken?: string }> {
     const { status, body } = await this.#token({ grant_type: 'refresh_token', refresh_token: refreshToken });
     if (status !== 200) {
       if (oauthError(body) === 'invalid_grant') throw new ProviderCredentialRejectedError();
       failFor(status);
     }
     if (!isRecord(body) || body.token_type !== 'Bearer') throw new GoogleResponseInvalidError();
-    return tokenField(body.access_token, 4096);
+    const accessToken = tokenField(body.access_token, 4096);
+    const rotated = body.refresh_token === undefined ? undefined : tokenField(body.refresh_token, 2048);
+    return rotated && rotated !== refreshToken ? { accessToken, refreshToken: rotated } : { accessToken };
+  }
+
+  /**
+   * Google-side revocation (OWNER-requested GBP_REVOKE_CONNECTION only). Google
+   * revokes the user's whole grant to this Google Cloud project — every token,
+   * for every Samvardiq organization that connected the same Google user.
+   * True only on Google's documented 200; anything else (400, 5xx, network) is
+   * false — never reported as revoked.
+   */
+  async revoke(token: string): Promise<boolean> {
+    try {
+      const { status } = await send(this.fetchImpl, REVOKE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token }).toString(),
+      });
+      return status === 200;
+    } catch {
+      return false;
+    }
   }
 
   #token(params: Record<string, string>) {

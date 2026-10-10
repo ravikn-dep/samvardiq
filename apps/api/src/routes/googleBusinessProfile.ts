@@ -4,8 +4,10 @@ import {
   handleGbpBindRequest,
   handleGbpCompleteAuthorizationRequest,
   handleGbpDisconnectRequest,
+  handleGbpRefreshDiscoveryRequest,
   handleGbpStatusRequest,
   handleGbpUnbindRequest,
+  handleGbpVerifyRequest,
   type GbpRouteDependencies,
 } from '@samvardiq/google-business-profile';
 
@@ -35,11 +37,21 @@ const STATUS_PROPERTIES = {
       updatedAt: { type: 'string' },
     },
   }),
-  binding: nullable({
-    type: 'object',
-    additionalProperties: false,
-    properties: { locationName: { type: 'string' }, accountName: { type: 'string' }, title: { type: 'string' }, boundByIdentityId: { type: 'string' }, boundAt: { type: 'string' } },
-  }),
+  bindings: {
+    type: 'array',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        locationName: { type: 'string' },
+        accountName: { type: 'string' },
+        title: { type: 'string' },
+        boundByIdentityId: { type: 'string' },
+        boundAt: { type: 'string' },
+        accessLostAt: { type: ['string', 'null'] },
+      },
+    },
+  },
   candidates: {
     type: 'array',
     items: {
@@ -50,6 +62,12 @@ const STATUS_PROPERTIES = {
   },
 } as const;
 const STATUS = { type: 'object', additionalProperties: false, properties: STATUS_PROPERTIES } as const;
+const LOCATION_PARAMS = {
+  type: 'object',
+  required: ['organizationId', 'locationId'],
+  additionalProperties: false,
+  properties: { ...PARAMS.properties, locationId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$' } },
+} as const;
 
 /**
  * GBP-W1 — OWNER-only Google Business Profile connection administration.
@@ -110,23 +128,51 @@ export function googleBusinessProfileRoute(app: FastifyInstance, deps: GoogleBus
     async (request) => handleGbpCompleteAuthorizationRequest(d, req(request), request.body),
   );
 
-  app.post<{ Params: { organizationId: string }; Body: { locationName: string } }>(
-    `${BASE}/binding`,
+  // G1: OWNER-requested provider operations, executed by the organization's GBP service principal.
+  app.post<{ Params: { organizationId: string } }>(`${BASE}/discovery`, { schema: { params: PARAMS, response: { 200: STATUS } } }, async (request) => handleGbpRefreshDiscoveryRequest(d, req(request)));
+
+  app.post<{ Params: { organizationId: string } }>(
+    `${BASE}/verify`,
+    { schema: { params: PARAMS, response: { 200: { type: 'object', additionalProperties: false, properties: { ...STATUS_PROPERTIES, health: { type: 'string' }, checkedAt: { type: 'string' } } } } } },
+    async (request) => handleGbpVerifyRequest(d, req(request)),
+  );
+
+  // G3: several locations per organization, each an explicit, confirmed OWNER choice.
+  app.post<{ Params: { organizationId: string }; Body: { locationNames: string[]; confirm: true } }>(
+    `${BASE}/bindings`,
     {
       schema: {
         params: PARAMS,
-        body: { type: 'object', required: ['locationName'], additionalProperties: false, properties: { locationName: { type: 'string', pattern: '^locations/[A-Za-z0-9_-]{1,64}$' } } },
+        body: {
+          type: 'object',
+          required: ['locationNames', 'confirm'],
+          additionalProperties: false,
+          properties: {
+            locationNames: { type: 'array', minItems: 1, maxItems: 25, uniqueItems: true, items: { type: 'string', pattern: '^locations/[A-Za-z0-9_-]{1,64}$' } },
+            confirm: { const: true },
+          },
+        },
         response: { 200: STATUS },
       },
     },
-    async (request) => handleGbpBindRequest(d, req(request), request.body.locationName),
+    async (request) => handleGbpBindRequest(d, req(request), request.body),
   );
 
-  app.delete<{ Params: { organizationId: string } }>(`${BASE}/binding`, { schema: { params: PARAMS, response: { 200: STATUS } } }, async (request) => handleGbpUnbindRequest(d, req(request)));
+  app.delete<{ Params: { organizationId: string; locationId: string } }>(
+    `${BASE}/bindings/:locationId`,
+    { schema: { params: LOCATION_PARAMS, response: { 200: STATUS } } },
+    async (request) => handleGbpUnbindRequest(d, req(request), `locations/${request.params.locationId}`),
+  );
 
-  app.post<{ Params: { organizationId: string } }>(
+  app.post<{ Params: { organizationId: string }; Body: { revokeGoogleAccess: boolean } }>(
     `${BASE}/disconnect`,
-    { schema: { params: PARAMS, response: { 200: { type: 'object', additionalProperties: false, properties: { ...STATUS_PROPERTIES, googleAuthorization: { type: 'string' } } } } } },
-    async (request) => handleGbpDisconnectRequest(d, req(request)),
+    {
+      schema: {
+        params: PARAMS,
+        body: { type: 'object', required: ['revokeGoogleAccess'], additionalProperties: false, properties: { revokeGoogleAccess: { type: 'boolean' } } },
+        response: { 200: { type: 'object', additionalProperties: false, properties: { ...STATUS_PROPERTIES, googleRevocation: { type: 'string' } } } },
+      },
+    },
+    async (request) => handleGbpDisconnectRequest(d, req(request), request.body),
   );
 }

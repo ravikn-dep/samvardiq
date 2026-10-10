@@ -1,7 +1,7 @@
 import { authenticateRequest, type IncomingRequest, type RequestBoundaryDependencies } from '@samvardiq/application-services';
 import type { TrustedOrganizationContext } from '@samvardiq/identity-access';
 
-import type { GbpConnectionService, GbpDisconnectResult, GbpStatus } from './connectionService.js';
+import type { GbpConnectionService, GbpDisconnectResult, GbpStatus, GbpVerifyResult } from './connectionService.js';
 import { GbpNotConfiguredError } from './errors.js';
 
 export type GbpRouteDependencies = RequestBoundaryDependencies & {
@@ -37,17 +37,27 @@ export async function handleGbpCompleteAuthorizationRequest(deps: GbpRouteDepend
   return gbp.completeAuthorization(context, input);
 }
 
-export async function handleGbpBindRequest(deps: GbpRouteDependencies, request: IncomingRequest, locationName: string): Promise<GbpStatus> {
+export async function handleGbpBindRequest(deps: GbpRouteDependencies, request: IncomingRequest, input: { locationNames: string[]; confirm: boolean }): Promise<GbpStatus> {
   const { context, gbp } = await authorized(deps, request);
-  return gbp.bind(context, locationName);
+  return gbp.bind(context, input);
 }
 
-export async function handleGbpUnbindRequest(deps: GbpRouteDependencies, request: IncomingRequest): Promise<GbpStatus> {
+export async function handleGbpUnbindRequest(deps: GbpRouteDependencies, request: IncomingRequest, locationName: string): Promise<GbpStatus> {
   const { context, gbp } = await authorized(deps, request);
-  return gbp.unbind(context);
+  return gbp.unbind(context, locationName);
 }
 
-export async function handleGbpDisconnectRequest(deps: GbpRouteDependencies, request: IncomingRequest): Promise<GbpDisconnectResult> {
+export async function handleGbpRefreshDiscoveryRequest(deps: GbpRouteDependencies, request: IncomingRequest): Promise<GbpStatus> {
   const { context, gbp } = await authorized(deps, request);
-  return gbp.disconnect(context);
+  return gbp.refreshDiscovery(context);
+}
+
+export async function handleGbpVerifyRequest(deps: GbpRouteDependencies, request: IncomingRequest): Promise<GbpVerifyResult> {
+  const { context, gbp } = await authorized(deps, request);
+  return gbp.verifyConnection(context);
+}
+
+export async function handleGbpDisconnectRequest(deps: GbpRouteDependencies, request: IncomingRequest, input: { revokeGoogleAccess: boolean }): Promise<GbpDisconnectResult> {
+  const { context, gbp } = await authorized(deps, request);
+  return gbp.disconnect(context, input);
 }

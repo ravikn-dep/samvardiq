@@ -1,5 +1,5 @@
 {
-  "id": "389da3b2-b8dd-49f4-bc89-e4faffea759d",
+  "id": "2486e413-1005-484c-bcef-d3dcd1c7b0d0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -80,6 +80,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "access_lost_at": {
+          "name": "access_lost_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -88,22 +94,6 @@
           "columns": [
             {
               "expression": "location_name",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"gbp_location_bindings\".\"unbound_at\" IS NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "gbp_location_bindings_active_organization_key": {
-          "name": "gbp_location_bindings_active_organization_key",
-          "columns": [
-            {
-              "expression": "organization_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -168,7 +158,7 @@
         },
         "gbp_location_bindings_reason_check": {
           "name": "gbp_location_bindings_reason_check",
-          "value": "\"gbp_location_bindings\".\"unbind_reason\" IN ('OWNER_UNBOUND','CONNECTION_DISCONNECTED','LOCATION_NOT_RETURNED')"
+          "value": "\"gbp_location_bindings\".\"unbind_reason\" IN ('OWNER_UNBOUND','CONNECTION_DISCONNECTED')"
         },
         "gbp_location_bindings_unbound_check": {
           "name": "gbp_location_bindings_unbound_check",
@@ -267,6 +257,137 @@
         "gbp_location_candidates_metadata_check": {
           "name": "gbp_location_candidates_metadata_check",
           "value": "char_length(\"gbp_location_candidates\".\"title\") <= 200 AND char_length(\"gbp_location_candidates\".\"account_display_name\") <= 200 AND coalesce(char_length(\"gbp_location_candidates\".\"address_summary\"), 0) <= 300"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.gbp_operation_events": {
+      "name": "gbp_operation_events",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phase": {
+          "name": "phase",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_principal_type": {
+          "name": "actor_principal_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_identity_id": {
+          "name": "actor_identity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "failure_class": {
+          "name": "failure_class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "gbp_operation_events_request_idx": {
+          "name": "gbp_operation_events_request_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "gbp_operation_events_organization_id_event_id_pk": {
+          "name": "gbp_operation_events_organization_id_event_id_pk",
+          "columns": [
+            "organization_id",
+            "event_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "gbp_operation_events_provider_check": {
+          "name": "gbp_operation_events_provider_check",
+          "value": "\"gbp_operation_events\".\"provider\" = 'google_business_profile'"
+        },
+        "gbp_operation_events_operation_check": {
+          "name": "gbp_operation_events_operation_check",
+          "value": "\"gbp_operation_events\".\"operation\" IN ('GBP_DISCOVER_LOCATIONS','GBP_VERIFY_CONNECTION','GBP_REVOKE_CONNECTION')"
+        },
+        "gbp_operation_events_phase_check": {
+          "name": "gbp_operation_events_phase_check",
+          "value": "\"gbp_operation_events\".\"phase\" IN ('REQUESTED','SUCCEEDED','FAILED')"
+        },
+        "gbp_operation_events_actor_check": {
+          "name": "gbp_operation_events_actor_check",
+          "value": "(\"gbp_operation_events\".\"phase\" = 'REQUESTED') = (\"gbp_operation_events\".\"actor_principal_type\" = 'human') AND \"gbp_operation_events\".\"actor_principal_type\" IN ('human','service')"
+        },
+        "gbp_operation_events_failure_check": {
+          "name": "gbp_operation_events_failure_check",
+          "value": "(\"gbp_operation_events\".\"phase\" = 'FAILED') = (\"gbp_operation_events\".\"failure_class\" IS NOT NULL) AND coalesce(\"gbp_operation_events\".\"failure_class\" ~ '^[a-z][a-z0-9_]{1,63}$', true)"
         }
       },
       "isRLSEnabled": false

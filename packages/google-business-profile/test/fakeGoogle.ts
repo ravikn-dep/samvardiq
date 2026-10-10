@@ -37,6 +37,8 @@ export class FakeGoogle {
   /** Optional per-endpoint override, e.g. to simulate 5xx/429/malformed responses. */
   override: ((request: RecordedRequest) => Reply | undefined) | undefined;
   tokenResponseEdit: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
+  /** Emulate a provider that rotates refresh tokens: each refresh issues a new one and invalidates the old. (Google normally does not.) */
+  rotateRefreshTokens = false;
 
   readonly fetch: HttpFetch = async (url, init) => {
     const request: RecordedRequest = { method: init.method, url, headers: init.headers, body: init.body };
@@ -56,8 +58,14 @@ export class FakeGoogle {
     return { code, state: p.get('state')!, redirectUri: p.get('redirect_uri')! };
   }
 
+  /** The user removes the app's access (or Google revokes the grant): every token of that user is dead. */
   revoke(user: GoogleUser): void {
-    for (const [token, owner] of this.#refresh) if (owner === user) this.#refresh.delete(token);
+    for (const map of [this.#refresh, this.#access]) for (const [token, owner] of map) if (owner === user) map.delete(token);
+  }
+
+  /** Does Google still honour this refresh token? */
+  isLive(refreshToken: string): boolean {
+    return this.#refresh.has(refreshToken);
   }
 
   #token(): string {
@@ -68,6 +76,14 @@ export class FakeGoogle {
 
   #handle(request: RecordedRequest): Reply {
     const url = new URL(request.url);
+    if (request.method === 'POST' && request.url === 'https://oauth2.googleapis.com/revoke') {
+      // Google: revocation removes the user's whole grant to the project — every access and refresh token.
+      const token = new URLSearchParams(request.body).get('token') ?? '';
+      const user = this.#refresh.get(token) ?? this.#access.get(token);
+      if (!user) return { status: 400, body: { error: 'invalid_token' } };
+      this.revoke(user);
+      return { status: 200, body: {} };
+    }
     if (request.method === 'POST' && request.url === 'https://oauth2.googleapis.com/token') {
       const form = new URLSearchParams(request.body);
       if (form.get('client_id') !== this.clientId || form.get('client_secret') !== this.clientSecret) return { status: 401, body: { error: 'invalid_client' } };
@@ -91,7 +107,15 @@ export class FakeGoogle {
         if (!user) return { status: 400, body: { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' } };
         const access = this.#token();
         this.#access.set(access, user);
-        return { status: 200, body: { access_token: access, expires_in: 3599, scope: 'https://www.googleapis.com/auth/business.manage', token_type: 'Bearer' } };
+        const body: Record<string, unknown> = { access_token: access, expires_in: 3599, scope: 'https://www.googleapis.com/auth/business.manage', token_type: 'Bearer' };
+        if (this.rotateRefreshTokens) {
+          this.#refresh.delete(form.get('refresh_token')!);
+          const next = `1//0g${randomBytes(24).toString('hex')}`;
+          this.issued.push(next);
+          this.#refresh.set(next, user);
+          body.refresh_token = next;
+        }
+        return { status: 200, body };
       }
       return { status: 400, body: { error: 'unsupported_grant_type' } };
     }

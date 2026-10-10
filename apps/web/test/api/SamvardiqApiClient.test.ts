@@ -64,7 +64,7 @@ describe('SamvardiqApiClient', () => {
   });
 
   it('GBP-W1: completion forwards only state + code as JSON with the bearer token, to the organization-scoped route', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ connection: null, binding: null, candidates: [] }), { status: 200 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ connection: null, bindings: [], candidates: [] }), { status: 200 }));
     const client = new SamvardiqApiClient('https://api.example', async () => 'token');
     await client.completeGbpAuthorization('org A', { state: 's', code: 'c' });
     expect(fetchMock).toHaveBeenCalledWith('https://api.example/v1/organizations/org%20A/integrations/google-business-profile/authorizations/complete', {
@@ -72,5 +72,17 @@ describe('SamvardiqApiClient', () => {
       headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: 's', code: 'c' }),
     });
+  });
+
+  it('GBP-W1: binding asserts the confirmed selection; unbinding addresses one location; disconnect carries the explicit revocation choice', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ connection: null, bindings: [], candidates: [] }), { status: 200 }));
+    const client = new SamvardiqApiClient('https://api.example', async () => 'token');
+    const base = 'https://api.example/v1/organizations/org-A/integrations/google-business-profile';
+    await client.bindGbpLocations('org-A', ['locations/1', 'locations/2']);
+    expect(fetchMock).toHaveBeenLastCalledWith(`${base}/bindings`, expect.objectContaining({ method: 'POST', body: JSON.stringify({ locationNames: ['locations/1', 'locations/2'], confirm: true }) }));
+    await client.unbindGbpLocation('org-A', 'locations/2');
+    expect(fetchMock).toHaveBeenLastCalledWith(`${base}/bindings/2`, expect.objectContaining({ method: 'DELETE' }));
+    await client.disconnectGbp('org-A', false);
+    expect(fetchMock).toHaveBeenLastCalledWith(`${base}/disconnect`, expect.objectContaining({ method: 'POST', body: JSON.stringify({ revokeGoogleAccess: false }) }));
   });
 });

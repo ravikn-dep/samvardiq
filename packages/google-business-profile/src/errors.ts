@@ -113,7 +113,7 @@ export type GbpConflictKind = 'not_connected' | 'already_bound' | 'bound_elsewhe
 
 const CONFLICT_MESSAGES: Record<GbpConflictKind, string> = {
   not_connected: 'Connect an active Google Business Profile account first.',
-  already_bound: 'This organization already has a bound location. Unbind it first.',
+  already_bound: 'That location is already bound to this organization.',
   bound_elsewhere: 'That location is already bound to another organization.',
   already_connected: 'A Google Business Profile connection is already being set up for this organization. Try again.',
 };
@@ -127,8 +127,37 @@ export class GbpConflictError extends GbpError {
 /** AB/AC: the location is not among those discovered for this organization's current connection. */
 export class GbpLocationNotAvailableError extends GbpError {
   constructor() {
-    super('That location is not available to bind. Reconnect to refresh the list.');
+    super('That location is not available to bind. Refresh discovery and try again.');
   }
+}
+
+/**
+ * G1: the organization has no usable Google Business Profile service principal
+ * (never provisioned, or suspended/revoked — the kill switch). Stored
+ * credentials cannot be used, so the operation is refused before any Google call.
+ */
+export class GbpServicePrincipalUnavailableError extends GbpError {
+  constructor() {
+    super('Google Business Profile operations are not enabled for this organization.');
+  }
+}
+
+/** Google did not confirm revocation (any answer but 200, or no answer). Recorded as a distinct outcome; never reported as revoked. */
+export class GbpRevocationFailedError extends GbpError {
+  constructor() {
+    super('Google did not confirm the revocation.');
+  }
+}
+
+/**
+ * The stable, non-secret failure class recorded in gbp_operation_events
+ * (e.g. GoogleUnavailableError → google_unavailable, a credential error → its
+ * code). Anything unrecognised is 'internal' — never a message or detail.
+ */
+export function failureClassOf(error: unknown): string {
+  if (error instanceof CredentialError) return error.code;
+  if (error instanceof GbpError) return error.name.replace(/Error$/, '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().slice(0, 64);
+  return 'internal';
 }
 
 export interface ClassifiedGbpError {
@@ -142,7 +171,7 @@ export interface ClassifiedGbpError {
  * collapse to the codebase-wide 403 "Access denied.".
  */
 export function classifyGbpError(error: unknown): ClassifiedGbpError | null {
-  if (error instanceof GbpNotConfiguredError) return { httpStatus: 503, message: error.message };
+  if (error instanceof GbpNotConfiguredError || error instanceof GbpServicePrincipalUnavailableError) return { httpStatus: 503, message: error.message };
   if (error instanceof GoogleUnavailableError || error instanceof GoogleRateLimitedError) return { httpStatus: 503, message: error.message };
   if (error instanceof GoogleRequestRejectedError || error instanceof GoogleResponseInvalidError || error instanceof GoogleAccountUnidentifiedError || error instanceof GbpTooManyResourcesError) {
     return { httpStatus: 502, message: error.message };
@@ -162,6 +191,10 @@ export function classifyGbpError(error: unknown): ClassifiedGbpError | null {
         return { httpStatus: 404, message: 'Not found.' };
       case 'connection_conflict':
         return { httpStatus: 409, message: 'Request conflicts with the current state of this resource.' };
+      case 'credential_unavailable':
+      case 'credential_rejected':
+      case 'credential_invalid':
+        return { httpStatus: 409, message: 'The Google connection needs to be re-authorized. Reconnect to continue.' };
       case 'key_unavailable':
       case 'key_ring_invalid':
         return { httpStatus: 503, message: 'Provider connections are temporarily unavailable.' };

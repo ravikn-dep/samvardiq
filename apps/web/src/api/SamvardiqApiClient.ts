@@ -35,9 +35,12 @@ export interface GbpCandidate {
 
 export interface GbpStatus {
   connection: { connectionId: string; status: 'ACTIVE' | 'NEEDS_REAUTH' | 'DISCONNECTED'; googleAccountId: string | null; grantedScopes: string[]; connectedAt: string; updatedAt: string } | null;
-  binding: { locationName: string; accountName: string; title: string; boundByIdentityId: string; boundAt: string } | null;
+  /** Several locations may be bound (G3). `accessLostAt` set = Google no longer returns it to this connection: not used until restored. */
+  bindings: { locationName: string; accountName: string; title: string; boundByIdentityId: string; boundAt: string; accessLostAt: string | null }[];
   candidates: GbpCandidate[];
 }
+
+export type GoogleRevocationOutcome = 'REVOKED' | 'FAILED' | 'NOT_ATTEMPTED' | 'NOT_REQUESTED';
 
 /** Thrown for any non-2xx response. `message` is always the backend's own already-sanitized error text (never a raw exception, never SQL/token/internal-ID detail — see apps/api's classifyError). */
 export class ApiError extends Error {
@@ -80,16 +83,25 @@ export class SamvardiqApiClient {
     return this.request<GbpStatus>('POST', `${gbpPath(organizationId)}/authorizations/complete`, input);
   }
 
-  bindGbpLocation(organizationId: string, locationName: string): Promise<GbpStatus> {
-    return this.request<GbpStatus>('POST', `${gbpPath(organizationId)}/binding`, { locationName });
+  /** Call only after the OWNER explicitly confirmed this exact selection — `confirm: true` asserts that confirmation. */
+  bindGbpLocations(organizationId: string, locationNames: string[]): Promise<GbpStatus> {
+    return this.request<GbpStatus>('POST', `${gbpPath(organizationId)}/bindings`, { locationNames, confirm: true });
   }
 
-  unbindGbpLocation(organizationId: string): Promise<GbpStatus> {
-    return this.request<GbpStatus>('DELETE', `${gbpPath(organizationId)}/binding`);
+  unbindGbpLocation(organizationId: string, locationName: string): Promise<GbpStatus> {
+    return this.request<GbpStatus>('DELETE', `${gbpPath(organizationId)}/bindings/${encodeURIComponent(locationName.replace(/^locations\//, ''))}`);
   }
 
-  disconnectGbp(organizationId: string): Promise<GbpStatus & { googleAuthorization: 'NOT_REVOKED' }> {
-    return this.request('POST', `${gbpPath(organizationId)}/disconnect`);
+  refreshGbpDiscovery(organizationId: string): Promise<GbpStatus> {
+    return this.request<GbpStatus>('POST', `${gbpPath(organizationId)}/discovery`);
+  }
+
+  verifyGbpConnection(organizationId: string): Promise<GbpStatus & { health: 'HEALTHY'; checkedAt: string }> {
+    return this.request('POST', `${gbpPath(organizationId)}/verify`);
+  }
+
+  disconnectGbp(organizationId: string, revokeGoogleAccess: boolean): Promise<GbpStatus & { googleRevocation: GoogleRevocationOutcome }> {
+    return this.request('POST', `${gbpPath(organizationId)}/disconnect`, { revokeGoogleAccess });
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

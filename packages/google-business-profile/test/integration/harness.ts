@@ -60,7 +60,7 @@ export async function startHarness(port: number): Promise<Harness> {
     url: (user) => (user === 'owner' ? ownerUrl : appUrl),
     async truncateAll() {
       await owner.pool.query(
-        'TRUNCATE gbp_location_bindings, gbp_location_candidates, external_provider_credential_events, external_provider_credentials, external_provider_connections, provider_oauth_authorizations',
+        'TRUNCATE gbp_operation_events, gbp_location_bindings, gbp_location_candidates, external_provider_credential_events, external_provider_credentials, external_provider_connections, provider_oauth_authorizations',
       );
     },
     async stop() {
