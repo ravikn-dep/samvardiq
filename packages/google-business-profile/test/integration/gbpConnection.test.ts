@@ -35,6 +35,7 @@ import {
   GbpReadClient,
   GbpRedirectUriNotAllowedError,
   GbpServicePrincipalUnavailableError,
+  GbpTooManyResourcesError,
   gbpDatabase,
   gbpServicePrincipalResolver,
   GoogleAccountMismatchError,
@@ -680,5 +681,69 @@ describe('GBP-W1 connection against real PostgreSQL', () => {
     }
     await assert.rejects(h.owner.pool.query(`update gbp_operation_events set failure_class = 'x'`), /immutable/);
     await assert.rejects(h.owner.pool.query(`delete from gbp_operation_events`), /immutable/);
+  });
+
+  test('BS: a cached candidate is never sufficient — binding revalidates with Google first, so a location removed after discovery cannot be bound (and binding is audited as a service discovery)', async () => {
+    const user = clinicOwner();
+    await connect(ownerA, user);
+    assert.ok((await svc.status(ownerA)).candidates.some((c) => c.locationName === 'locations/9002'), 'still a cached candidate');
+    user.locations['accounts/222'] = [{ name: 'locations/9004', title: 'Example Clinic — Second Branch' }];
+    await rejectsWith(bindAll(svc, ownerA, 'locations/9002'), GbpLocationNotAvailableError);
+    await rejectsWith(bindAll(svc, ownerA, 'locations/9001', 'locations/9002'), GbpLocationNotAvailableError);
+    assert.equal(await count('gbp_location_bindings'), 0, 'all or nothing');
+    assert.deepEqual((await svc.status(ownerA)).candidates.map((c) => c.locationName).sort(), ['locations/9001', 'locations/9004'], 'the stale candidate is gone');
+    assert.equal((await bindAll(svc, ownerA, 'locations/9004')).bindings[0]?.locationName, 'locations/9004');
+
+    // A revoked grant: no binding can be made from candidates cached before the revocation.
+    google.revoke(user);
+    await rejectsWith(bindAll(svc, ownerA, 'locations/9001'), ProviderCredentialRejectedError);
+    assert.equal(await count('gbp_location_bindings', `location_name = 'locations/9001'`), 0);
+    const discoveries = await count('gbp_operation_events', `operation = 'GBP_DISCOVER_LOCATIONS' and phase = 'REQUESTED'`);
+    assert.ok(discoveries >= 5, 'every bind attempt ran an audited revalidation');
+  });
+
+  test('BT: Google revocation is grant-wide — revoking in org A also kills org B’s connection made with the SAME Google user (fails closed to NEEDS_REAUTH); a different Google user is unaffected', async () => {
+    const shared = clinicOwner();
+    await connect(ownerA, shared);
+    await connect(ownerB, shared);
+    const sp3 = await principals(['org-c']);
+    const ownerC = human('org-c', 'OWNER');
+    const svcC = build({ servicePrincipal: async (org) => (org === 'org-c' ? sp3.resolve(org) : sp.resolve(org)) });
+    await connect(ownerC, agency(), svcC);
+
+    assert.equal((await svc.disconnect(ownerA, { revokeGoogleAccess: true })).googleRevocation, 'REVOKED');
+    await rejectsWith(svc.verifyConnection(ownerB), ProviderCredentialRejectedError);
+    assert.equal((await svc.status(ownerB)).connection?.status, 'NEEDS_REAUTH', 'org B fails closed; its OWNER must reconnect');
+    assert.equal((await svcC.verifyConnection(ownerC)).health, 'HEALTHY', 'another Google user is untouched');
+  });
+
+  test('BU: a failed Google revocation still disconnects locally — no further Samvardiq use, even though Google still honours the token', async () => {
+    await connect(ownerA, clinicOwner());
+    const stored = google.issued.filter((t) => t.startsWith('1//0g'));
+    google.override = (r) => (r.url.endsWith('/revoke') ? { status: 503, body: {} } : undefined);
+    const result = await svc.disconnect(ownerA, { revokeGoogleAccess: true });
+    google.override = undefined;
+    assert.equal(result.googleRevocation, 'FAILED');
+    assert.ok(stored.some((t) => google.isLive(t)), 'Google-side grant still live');
+    assert.equal(await count('external_provider_credentials'), 0, 'but Samvardiq holds no credential');
+    await rejectsWith(svc.refreshDiscovery(ownerA), GbpConflictError, conflict('not_connected'));
+    await rejectsWith(svc.verifyConnection(ownerA), GbpConflictError, conflict('not_connected'));
+  });
+
+  test('CB: pagination failures fail closed — malformed nextPageToken, a 5xx on a later page, and unbounded pagination store no partial candidate list', async () => {
+    await connect(ownerA, clinicOwner());
+    const before = (await svc.status(ownerA)).candidates.map((c) => c.locationName).sort();
+    let page = 0;
+    const cases: [(u: URL) => { status: number; body: unknown } | undefined, abstract new (...a: never[]) => Error][] = [
+      [(u) => (u.pathname.endsWith('/locations') ? { status: 200, body: { locations: [{ name: 'locations/1', title: 't' }], nextPageToken: 42 } } : undefined), GoogleResponseInvalidError],
+      [(u) => (u.pathname.endsWith('/locations') ? (u.searchParams.get('pageToken') ? { status: 503, body: {} } : { status: 200, body: { locations: [{ name: 'locations/1', title: 't' }], nextPageToken: 'p2' } }) : undefined), GoogleUnavailableError],
+      [(u) => (u.pathname.endsWith('/locations') ? { status: 200, body: { locations: [{ name: `locations/p${page++}`, title: 't' }], nextPageToken: `p${page}` } } : undefined), GbpTooManyResourcesError],
+    ];
+    for (const [override, type] of cases) {
+      google.override = (r) => override(new URL(r.url));
+      await rejectsWith(svc.refreshDiscovery(ownerA), type);
+    }
+    google.override = undefined;
+    assert.deepEqual((await svc.status(ownerA)).candidates.map((c) => c.locationName).sort(), before, 'candidates unchanged by any failed discovery');
   });
 });

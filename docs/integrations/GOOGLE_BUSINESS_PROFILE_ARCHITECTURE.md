@@ -153,7 +153,7 @@ Base path: `/v1/organizations/:org/integrations/google-business-profile`. Every 
 | `POST …/authorizations/complete {state, code \| error}` | Complete (below) |
 | `POST …/discovery` | `GBP_DISCOVER_LOCATIONS` |
 | `POST …/verify` | `GBP_VERIFY_CONNECTION`: refresh, `accounts.list`, same Google account → `HEALTHY` |
-| `POST …/bindings {locationNames[1..25], confirm: true}` | Bind several, all or nothing |
+| `POST …/bindings {locationNames[1..25], confirm: true}` | Revalidate with Google (`GBP_DISCOVER_LOCATIONS`), then bind several, all or nothing |
 | `DELETE …/bindings/:locationId` | Unbind one (history kept) |
 | `POST …/disconnect {revokeGoogleAccess}` | Optional `GBP_REVOKE_CONNECTION`, then local disconnect |
 
@@ -192,7 +192,7 @@ verifier = base64url(HKDF-SHA256(master key[version], ["samvardiq.oauth-pkce.v1"
   - active bindings that Google returned get `access_lost_at = null`;
   - active bindings that Google did not return get `access_lost_at = now()` (fail closed for that location only).
 - **Discovery never deletes, unbinds or transfers a binding.** A marked binding still holds its location globally, so it is never silently released to another organization.
-- **Binding** requires an explicit list plus `confirm: true`. Each location must be a candidate of this organization's current ACTIVE connection. Stable resource names are the only identity; titles and addresses are display metadata and never authority.
+- **Binding** requires an explicit list plus `confirm: true`. It first **revalidates with Google**: it runs `GBP_DISCOVER_LOCATIONS` as the service principal (merge audit, BS), so a cached candidate is never sufficient. Then, in one transaction on the same still-ACTIVE connection, each location must be among the freshly discovered candidates. Stable resource names are the only identity; titles and addresses are display metadata and never authority.
 - A location already bound in this organization → `409 already_bound`. Bound to another organization → `409 bound_elsewhere` (partial unique index, also under concurrency).
 - **Unbind** is per location and idempotent. **Disconnect** ends every binding (`CONNECTION_DISCONNECTED`) and removes candidates. Binding rows are never deleted.
 - **Unsupported in W1:** an organization whose locations span several Google accounts can bind only the locations reachable from its one connected Google account. Several connections per organization need a future decision. The schema already keys bindings by connection, so lifting the limit drops one index (`gbp_one_open_connection_per_organization`).
@@ -206,13 +206,17 @@ verifier = base64url(HKDF-SHA256(master key[version], ["samvardiq.oauth-pkce.v1"
 ### Revocation and disconnect
 
 - Local disconnect and Google-side revocation are separate. The OWNER chooses `revokeGoogleAccess` explicitly.
-- **Revocation is grant-wide.** Google's documentation says revocation "removes all OAuth 2.0 scopes previously granted to a project, invalidating any issued access or refresh tokens for all clients registered under that project". Revoking therefore also breaks any other Samvardiq organization connected with the same Google user; that organization fails closed to NEEDS_REAUTH. The UI states this before the OWNER confirms.
+- **Revocation is grant-wide.** Google's documentation (re-verified 2026-10-13) says revocation "removes all OAuth 2.0 scopes previously granted to a project, invalidating any issued access or refresh tokens for all clients registered under that project".
+  - **What this means:** revoking also breaks any other Samvardiq organization connected with the same Google user; that organization fails closed to NEEDS_REAUTH (tested, BT). Organizations connected with a different Google user are unaffected.
+  - **What Google guarantees:** `200` means the revocation was successfully processed, and Google notes it may take time to take full effect. `400` (with an error code) means it was not.
+  - **What is not documented:** how long full effect takes.
+  - **UI:** the UI states the cross-organization impact before the OWNER confirms, and reports `REVOKED` as "Google accepted the revocation", not as an instantaneous guarantee.
 - **Order:**
   1. Revoke (service principal, stored refresh token, `POST https://oauth2.googleapis.com/revoke`) while the credential still exists.
   2. Run the ARCH-020 local disconnect: DISCONNECTED and ciphertext deleted, so no further Samvardiq use whatever Google answered.
   3. End the bindings and remove the candidates.
 - **Outcome `googleRevocation`:**
-  - `REVOKED`: only on Google's documented `200`;
+  - `REVOKED`: only on Google's documented `200` ("successfully processed"; full effect may lag);
   - `FAILED`: any other answer, audited with failure class `gbp_revocation_failed`;
   - `NOT_ATTEMPTED`: no usable credential or service principal;
   - `NOT_REQUESTED`: the OWNER chose a local-only disconnect.
@@ -303,6 +307,25 @@ Tests: `packages/google-business-profile/test/integration/gbpConnection.test.ts`
 | BH | New pool exceeds budget | No new pool; one shared single-connection pool (composition root) |
 | BJ | Google write endpoint reachable | Source scans + end-to-end GET-only assertion (P) |
 | BK, BL | Worker claims unregistered type; operator script exits 0 on failure | Unchanged from PLATFORM-JOBS-W1 / identity activation (existing tests); the new provisioning script sets `exitCode = 1` on failure |
+| BQ | PKCE derivation under master-key rotation | Verifier derives from the version recorded at begin; an older still-held version works, a removed version fails closed (C: `oauthAuthorizations.test.ts`) |
+| BR | State replay across concurrent callbacks | = AE/BE (P, C) |
+| BS | Candidate removed at Google before binding | Bind revalidates with Google first; the stale candidate is refused, all or nothing; a revoked grant binds nothing (P) |
+| BT | Revocation affecting a shared Google user | Another organization with the same Google user fails closed to NEEDS_REAUTH; a different Google user is unaffected; the UI warns (P, W) |
+| BU | Local disconnect after revocation failure | `FAILED` reported; the credential is deleted and every operation refused, although Google still honours the grant (P) |
+| BV | Refresh racing disconnect | CAS never revives (C) |
+| BW | Same location concurrently bound by two organizations | = AN/AW (P) |
+| BX | Service principal suspended | New operations are refused before Google; an in-flight operation finishes its single bounded sequence (P, H) |
+| BY, BZ | Stale OWNER session after revocation; callback after organization switch | = AP/BO; the state is bound to the initiating organization (P, H) |
+| CA | Cross-organization Google account enumeration | Candidates, connections and audit are RLS-scoped; only the bound-elsewhere 409 is disclosed (P) |
+| CB | Pagination failure | Malformed page token, a 5xx on a later page and unbounded pagination fail closed with candidates unchanged (P) |
+| CC | Callback logs containing the code | The code travels only in the POST body; captured request logs are scanned (H) |
+| CD | Injected metadata | = AM (P) |
+| CE | Unregistered operation | = AS (P) |
+| CF | State cleanup beside persistent data | Expired-state sweep is RLS-scoped to the beginning organization; D5 persistent-data verifier tests pass |
+| CG | Startup without Google secrets | Integration off, routes 503 (H, `config.test.ts`) |
+| CH | Credential store without extra pools | One shared single-connection pool, created only when configured; GBP tables reuse it (`gbpDatabase(pool)`). Verified by inspection of `apps/api/src/index.ts`: budget 4 × 3 + 1 + 1 = 14 of 15 |
+| CI | Callback page reaching the Supabase Data API | The page uses only the Samvardiq API; `supabaseBoundary.test.ts` |
+| CJ | Source-only deployment reporting health | Not configured → 503; `HEALTHY` only after a live Google call (H, P) |
 | (Ponytail) | Kill switch engaged between begin and complete | Refused before the code is exchanged; nothing stored (P) |
 | (Ponytail) | Rotation race leaves a valid successor discarded | CAS clears a NEEDS_REAUTH caused by the superseded token (C) |
 | (Ponytail) | React StrictMode sends the callback twice | One-shot guard (W) |

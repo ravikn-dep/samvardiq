@@ -498,7 +498,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
     });
 
     // ---- GBP-W1 ------------------------------------------------------------------------------------------------------
-    await reporter.check('B18 GBP-W1 as the runtime role: single-use OAuth state bound to human+org, one open GBP connection per org, confirmed binding only from candidates, several locations per org but each location in one org, service operations refused without a service principal (request audited), history and audit immutable to the runtime role', async () => {
+    await reporter.check('B18 GBP-W1 as the runtime role: single-use OAuth state bound to human+org, one open GBP connection per org, confirmed binding revalidated through a service principal (refused without one, request audited), several locations per org but each location in one org, history and audit immutable to the runtime role', async () => {
       // No Google call is made: the GBP service is given clients whose transport refuses to run. Discovery is emulated by
       // inserting candidates as the runtime role, exactly as a completed authorization would.
       const keyRing = MasterKeyRing.fromEnv({ [MASTER_KEYS_ENV]: `1:${randomBytes(32).toString('base64')}`, [ACTIVE_KEY_VERSION_ENV]: '1' });
@@ -551,13 +551,27 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       await candidate(ORG_B, connB.connectionId, location);
 
       const both = [location, `locations/${P}loc-2`];
-      await refused(gbp.bind(ownerA, { locationNames: [`locations/${P}loc-9`], confirm: true }), 'GbpLocationNotAvailableError');
       await refused(gbp.bind(ownerA, { locationNames: both, confirm: false }), 'GbpInvalidRequestError');
-      assert.deepEqual((await gbp.bind(ownerA, { locationNames: both, confirm: true })).bindings.map((b) => b.locationName).sort(), [...both].sort(), 'several locations in one organization');
-      await refused(gbp.bind(ownerB, { locationNames: [location], confirm: true }), 'GbpConflictError');
+      // Binding revalidates with Google first (BS) — with no service principal it is refused before any write.
+      await refused(gbp.bind(ownerA, { locationNames: both, confirm: true }), 'GbpServicePrincipalUnavailableError');
       await refused(gbp.refreshDiscovery(ownerA), 'GbpServicePrincipalUnavailableError');
       const audit = (await admin.pool.query(`select operation, phase, actor_principal_type from public.gbp_operation_events where organization_id = $1`, [ORG_A])).rows;
-      assert.deepEqual(audit.map((r) => ({ ...r })), [{ operation: 'GBP_DISCOVER_LOCATIONS', phase: 'REQUESTED', actor_principal_type: 'human' }], 'the OWNER request is audited; no service outcome');
+      assert.deepEqual(
+        audit.map((r) => ({ ...r })),
+        [1, 2].map(() => ({ operation: 'GBP_DISCOVER_LOCATIONS', phase: 'REQUESTED', actor_principal_type: 'human' })),
+        'each OWNER request is audited; no service outcome without a service principal',
+      );
+      // The database invariants themselves, as the runtime role: several locations per organization, each location in one organization only.
+      const bindRow = (org: string, connectionId: string, name: string) =>
+        inTx(cred.pool, { org }, (c) =>
+          c.query(
+            `insert into gbp_location_bindings (organization_id, binding_id, connection_id, provider, location_name, account_name, title, bound_by_identity_id) values ($1, $2, $3, $4, $5, $6, 'synthetic', $7)`,
+            [org, randomUUID(), connectionId, GBP_PROVIDER, name, `accounts/${P}x`, ownerA.identityId],
+          ),
+        );
+      for (const name of both) await bindRow(ORG_A, connA.connectionId, name);
+      assert.deepEqual((await gbp.status(ownerA)).bindings.map((b) => b.locationName).sort(), [...both].sort(), 'several locations in one organization');
+      await expectSqlState(bindRow(ORG_B, connB.connectionId, location), '23505', 'one location actively bound in two organizations');
       const disconnected = await gbp.disconnect(ownerB, { revokeGoogleAccess: false });
       assert.equal(disconnected.googleRevocation, 'NOT_REQUESTED');
       assert.equal((await gbp.status(ownerA)).candidates.length, 2, 'org A sees only its own candidates');
@@ -568,7 +582,7 @@ export async function runBehaviorSuite(admin: AdminPostgres, connect: ConnectAsR
       await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`update provider_oauth_authorizations set identity_id = 'x' where organization_id = '${ORG_A}'`)), '42501', 'runtime OAuth state rewrite');
       await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`update gbp_operation_events set phase = 'SUCCEEDED' where organization_id = '${ORG_A}'`)), '42501', 'runtime audit rewrite');
       await expectSqlState(inTx(cred.pool, { org: ORG_A }, (c) => c.query(`delete from gbp_operation_events where organization_id = '${ORG_A}'`)), '42501', 'runtime audit DELETE');
-      return 'state single-use + human/org-bound, PKCE re-derived; second open GBP connection refused; confirmed bind only from candidates; 2 locations in one org, location refused to another org; service op refused without principal (REQUESTED audited); history/audit DELETE/rewrite = 42501; disconnect NOT_REQUESTED';
+      return 'state single-use + human/org-bound, PKCE re-derived; second open GBP connection refused; unconfirmed bind 400; bind/discovery refused without service principal (REQUESTED audited); 2 locations in one org, same location in another org = 23505; history/audit DELETE/rewrite = 42501; disconnect NOT_REQUESTED';
     });
 
     // ---- missing organization context ------------------------------------------------------------------------------

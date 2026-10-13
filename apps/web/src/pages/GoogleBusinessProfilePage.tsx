@@ -11,7 +11,7 @@ const messageOf = (err: unknown) =>
   err instanceof ApiError ? (err.status === 403 ? 'Only an organization OWNER can manage this integration.' : err.message) : 'Something went wrong. Please try again.';
 
 const REVOCATION_NOTICE: Record<GoogleRevocationOutcome, string> = {
-  REVOKED: 'Disconnected. Google confirmed that Samvardiq’s access was revoked, and Samvardiq deleted its stored access.',
+  REVOKED: 'Disconnected. Google accepted the revocation of Samvardiq’s access (it can take a short time to take full effect), and Samvardiq deleted its stored access.',
   FAILED: 'Disconnected, and Samvardiq deleted its stored access — but Google did not confirm the revocation. Remove Samvardiq under your Google Account’s third-party access to be sure.',
   NOT_ATTEMPTED: 'Disconnected, and Samvardiq deleted its stored access. Google-side revocation could not be attempted; remove Samvardiq under your Google Account’s third-party access if you wish.',
   NOT_REQUESTED: 'Disconnected. Samvardiq deleted its stored access. Google still lists Samvardiq under your Google Account’s third-party access until you remove it there.',

@@ -231,22 +231,27 @@ export class GbpConnectionService {
   }
 
   /**
-   * Explicit binding (OWNER, `confirm: true` required). Only locations
-   * discovered for THIS organization's current, ACTIVE connection can be bound
-   * (AB/AC); names, addresses and other metadata are never matched. All or
-   * nothing. The connection row is share-locked for the transaction, so a
-   * concurrent disconnect cannot interleave (AO). A location bound to another
-   * organization is refused by the database (AN/AW).
+   * Explicit binding (OWNER, `confirm: true` required). A cached candidate is
+   * never sufficient (BS): the selection is first revalidated against Google by
+   * a GBP_DISCOVER_LOCATIONS service operation, so only locations the
+   * connection's grant reaches NOW can be bound (AB/AC); names, addresses and
+   * other metadata are never matched. All or nothing. The connection row is
+   * share-locked for the binding transaction and must still be the one just
+   * revalidated, so a concurrent disconnect or reconnection cannot interleave
+   * (AO). A location bound to another organization is refused by the database
+   * (AN/AW).
    */
   async bind(actor: TrustedOrganizationContext, input: { locationNames: string[]; confirm: boolean }): Promise<GbpStatus> {
     assertOwner(actor);
     const names = input?.locationNames;
     if (input?.confirm !== true || !Array.isArray(names) || names.length < 1 || names.length > MAX_BIND || new Set(names).size !== names.length) throw new GbpInvalidRequestError();
     if (!names.every((n) => typeof n === 'string' && LOCATION_NAME.test(n))) throw new GbpInvalidRequestError();
+    const connection = await this.#activeConnection(actor);
+    await this.#execute(actor, connection, 'GBP_DISCOVER_LOCATIONS', (session) => this.#discover(actor, connection, session));
     try {
       await this.#tx(actor, async (tx) => {
         const open = await lockConnection(tx, actor.organizationId);
-        if (!open || open.status !== 'ACTIVE') throw new GbpConflictError('not_connected');
+        if (!open || open.status !== 'ACTIVE' || open.connectionId !== connection.connectionId) throw new GbpConflictError('not_connected');
         const found = await tx
           .select()
           .from(candidates)

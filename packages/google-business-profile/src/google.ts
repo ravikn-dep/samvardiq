@@ -163,7 +163,8 @@ export class GoogleOAuthClient {
    * Google-side revocation (OWNER-requested GBP_REVOKE_CONNECTION only). Google
    * revokes the user's whole grant to this Google Cloud project — every token,
    * for every Samvardiq organization that connected the same Google user.
-   * True only on Google's documented 200; anything else (400, 5xx, network) is
+   * True only on Google's documented 200 ("successfully processed"; Google notes
+   * it may take time to take full effect); anything else (400, 5xx, network) is
    * false — never reported as revoked.
    */
   async revoke(token: string): Promise<boolean> {
